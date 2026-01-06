@@ -1,0 +1,451 @@
+CR360 Test Results
+================================================================================
+
+
+================================================================================
+Query 1: What is the total outstanding balance for the latest quarter?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user is asking for the "total outstanding balance" without any breakdowns or filters. This is a portfolio-level aggregate metric, which is best retrieved from the `computed_metrics` table as it contains pre-calculated totals. The query also specifies "latest quarter", so a subquery to find the maximum `as_of_date` is used.
+SQL: SELECT
+  total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date = (SELECT MAX(as_of_date) FROM computed_metrics)
+
+Results:
+  Row 1: {
+  "total_outstanding_balance": "20144395.71"
+}
+================================================================================
+
+================================================================================
+Query 2: Show me the total outstanding balance for Q4 2024
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The query asks for the "total outstanding balance" which is a portfolio-level aggregate without any breakdowns. The `computed_metrics` table contains the `total_outstanding_balance` pre-calculated, making it the most efficient and accurate source for this type of query.
+SQL: SELECT
+  total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date = '2024-12-31'
+
+Results:
+  Row 1: {
+  "total_outstanding_balance": "14001997.78"
+}
+================================================================================
+
+================================================================================
+Query 3: What is the 30+ day delinquency rate for Q4 2024?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The query asks for a portfolio-level "30+ day delinquency rate" for a specific quarter (Q4 2024) without any breakdowns. The `computed_metrics` table contains the pre-calculated `delinquency_rate_30_plus` metric, which is ideal for such aggregate, portfolio-level requests, ensuring accuracy and efficiency.
+SQL: SELECT
+  delinquency_rate_30_plus
+FROM computed_metrics
+WHERE as_of_date = '2024-12-31';
+
+Results:
+  Row 1: {
+  "delinquency_rate_30_plus": "0.1360"
+}
+================================================================================
+
+================================================================================
+Query 4: What is the ECL coverage ratio for the latest quarter?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user is asking for the "ECL coverage ratio" at a portfolio level ("latest quarter" implies a single aggregate value, not a breakdown). The `ecl_coverage_ratio` is a complex, pre-computed metric explicitly available in the `computed_metrics` table. According to the routing rules, complex ratios and portfolio-level aggregates without breakdowns should always use `computed_metrics` to ensure accuracy and avoid error-prone calculations. The `MAX(as_of_date)` subquery ensures we retrieve data for the latest available quarter.
+SQL: SELECT ecl_coverage_ratio
+FROM computed_metrics
+WHERE as_of_date = (SELECT MAX(as_of_date) FROM computed_metrics)
+
+Results:
+  Row 1: {
+  "ecl_coverage_ratio": "0.0153"
+}
+================================================================================
+
+================================================================================
+Query 5: Show me outstanding balance by product for Q4 2024
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 5
+Explanation: The query asks for a breakdown of "outstanding balance by product". This requires grouping the data by `product_code`, which is only possible with the granular `accounts` table. The `computed_metrics` table provides total outstanding balance but not by individual product categories in a way that allows for a `GROUP BY` clause.
+SQL: SELECT
+  product_code,
+  SUM(adjusted_eop_balance) AS outstanding_balance
+FROM accounts
+WHERE as_of_date = '2024-12-31'
+GROUP BY product_code
+ORDER BY outstanding_balance DESC;
+
+Results:
+  Row 1: {
+  "product_code": "MTG",
+  "outstanding_balance": "12365809.17"
+}
+  Row 2: {
+  "product_code": "HELOC",
+  "outstanding_balance": "631016.02"
+}
+  Row 3: {
+  "product_code": "AUTO",
+  "outstanding_balance": "543637.17"
+}
+  Row 4: {
+  "product_code": "PL",
+  "outstanding_balance": "240216.43"
+}
+  Row 5: {
+  "product_code": "CC",
+  "outstanding_balance": "221318.99"
+}
+================================================================================
+
+================================================================================
+Query 6: What is the outstanding balance by region for the latest quarter?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 5
+Explanation: The query asks for a breakdown of "outstanding balance by region". This requires grouping the data by `region_code`, which is only possible with the granular `accounts` table. The `computed_metrics` table provides portfolio totals but does not support breakdowns by dimensions like region. The `MAX(as_of_date)` subquery ensures we retrieve data for the latest quarter.
+SQL: SELECT
+  region_code,
+  SUM(adjusted_eop_balance) AS outstanding_balance
+FROM accounts
+WHERE as_of_date = (SELECT MAX(as_of_date) FROM accounts)
+GROUP BY region_code
+ORDER BY outstanding_balance DESC;
+
+Results:
+  Row 1: {
+  "region_code": "Southeast",
+  "outstanding_balance": "5532264.36"
+}
+  Row 2: {
+  "region_code": "Northeast",
+  "outstanding_balance": "4747971.69"
+}
+  Row 3: {
+  "region_code": "West",
+  "outstanding_balance": "4696378.49"
+}
+  Row 4: {
+  "region_code": "Midwest",
+  "outstanding_balance": "3553489.48"
+}
+  Row 5: {
+  "region_code": "Central",
+  "outstanding_balance": "1614291.69"
+}
+================================================================================
+
+================================================================================
+Query 7: Show me delinquency rates by customer segment for Q4 2024
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 3
+Explanation: The query asks for "delinquency rates by customer segment", which requires a breakdown by a dimension (`customer_segment`). According to the routing rules, queries needing a `GROUP BY` clause for breakdowns must use the `accounts` table. The `delinquency_rate_30_plus` metric is calculated using the `adjusted_eop_balance` and `days_past_due` columns from the `accounts` table.
+SQL: SELECT
+  customer_segment,
+  SUM(CASE WHEN days_past_due >= 30 THEN adjusted_eop_balance ELSE 0 END) /
+  NULLIF(SUM(adjusted_eop_balance), 0) * 100 as delinquency_rate_30_plus
+FROM accounts
+WHERE as_of_date = '2024-12-31'
+GROUP BY customer_segment
+ORDER BY delinquency_rate_30_plus DESC
+
+Results:
+  Row 1: {
+  "customer_segment": "SUBPRIME",
+  "delinquency_rate_30_plus": "47.27453370110566402400"
+}
+  Row 2: {
+  "customer_segment": "NEAR_PRIME",
+  "delinquency_rate_30_plus": "6.94082950947524009400"
+}
+  Row 3: {
+  "customer_segment": "PRIME",
+  "delinquency_rate_30_plus": "0.11550792303238327700"
+}
+================================================================================
+
+================================================================================
+Query 8: Compare outstanding balance across products and regions for Q4 2024
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 25
+Explanation: The query requires a breakdown of outstanding balance by both `product_code` and `region_code`. This necessitates using the `accounts` table, which contains granular, account-level data suitable for grouping and aggregation by various dimensions. The `computed_metrics` table is not suitable here as it only provides portfolio-level totals and complex ratios without dimensional breakdowns.
+SQL: SELECT
+  product_code,
+  region_code,
+  SUM(adjusted_eop_balance) AS outstanding_balance
+FROM accounts
+WHERE as_of_date = '2024-12-31' -- Assuming '2024-12-31' represents Q4 2024
+GROUP BY
+  product_code,
+  region_code
+ORDER BY
+  product_code,
+  region_code;
+
+Results:
+  Row 1: {
+  "product_code": "AUTO",
+  "region_code": "Central",
+  "outstanding_balance": "74213.70"
+}
+  Row 2: {
+  "product_code": "AUTO",
+  "region_code": "Midwest",
+  "outstanding_balance": "129257.50"
+}
+  Row 3: {
+  "product_code": "AUTO",
+  "region_code": "Northeast",
+  "outstanding_balance": "110253.38"
+}
+  Row 4: {
+  "product_code": "AUTO",
+  "region_code": "Southeast",
+  "outstanding_balance": "115009.12"
+}
+  Row 5: {
+  "product_code": "AUTO",
+  "region_code": "West",
+  "outstanding_balance": "114903.47"
+}
+  ... and 20 more rows
+================================================================================
+
+================================================================================
+Query 9: What is the total outstanding balance?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user is asking for the "total outstanding balance" without any breakdowns or filters on account-level attributes. This is a portfolio-level aggregate, which is directly available in the `computed_metrics` table as `total_outstanding_balance`. Using `computed_metrics` is more efficient and leverages pre-computed, validated data for portfolio totals. The query is filtered for the specified 'Q4 2024' (assumed to be '2024-12-31').
+SQL: SELECT
+  total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date = '2024-12-31'
+
+Results:
+  Row 1: {
+  "total_outstanding_balance": "14001997.78"
+}
+================================================================================
+
+================================================================================
+Query 10: Show me delinquency rates
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user is asking for the "Overall portfolio" delinquency rate for a specific quarter ('Q4 2024'). This is a portfolio-level aggregate without any breakdowns. Therefore, the `computed_metrics` table is the most appropriate choice as it contains pre-calculated, validated portfolio-level metrics like `delinquency_rate_30_plus`.
+SQL: SELECT
+  delinquency_rate_30_plus
+FROM computed_metrics
+WHERE as_of_date = '2024-12-31'
+
+Results:
+  Row 1: {
+  "delinquency_rate_30_plus": "0.1360"
+}
+================================================================================
+
+================================================================================
+Query 11: What is the ECL?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user is asking for a "Total Expected Credit Loss" amount, which is a portfolio-level aggregate without any breakdowns. The `computed_metrics` table contains the `total_expected_credit_loss` column, which is pre-calculated and validated for the entire portfolio. This aligns with the routing rule to use `computed_metrics` for portfolio-level totals.
+SQL: SELECT
+  total_expected_credit_loss
+FROM computed_metrics
+WHERE as_of_date = '2024-12-31'
+
+Results:
+  Row 1: {
+  "total_expected_credit_loss": "215789.11"
+}
+================================================================================
+
+================================================================================
+Query 12: Show me the data
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user requested the 'Total outstanding balance' at an 'Overall portfolio total' aggregation level. According to the routing rules, "total", "overall", or "portfolio-level" metrics without breakdowns should use the `computed_metrics` table. The `total_outstanding_balance` is directly available in this table. The query filters for the latest available `as_of_date` to represent the most current quarter (Q4 2024, as clarified by the user).
+SQL: SELECT total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date = (SELECT MAX(as_of_date) FROM computed_metrics)
+
+Results:
+  Row 1: {
+  "total_outstanding_balance": "20144395.71"
+}
+================================================================================
+
+================================================================================
+Query 13: Show me all available quarters in the data
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 8
+Explanation: The user is asking for all available quarters, which means listing the distinct `as_of_date` values. Both `accounts` and `computed_metrics` tables contain this information. Since `computed_metrics` is a smaller table (8 rows, one per quarter) and directly represents the available reporting periods, it's the most efficient and appropriate choice for this simple query.
+SQL: SELECT DISTINCT as_of_date
+FROM computed_metrics
+ORDER BY as_of_date;
+
+Results:
+  Row 1: {
+  "as_of_date": "2024-03-31"
+}
+  Row 2: {
+  "as_of_date": "2024-06-30"
+}
+  Row 3: {
+  "as_of_date": "2024-09-30"
+}
+  Row 4: {
+  "as_of_date": "2024-12-31"
+}
+  Row 5: {
+  "as_of_date": "2025-03-31"
+}
+  ... and 3 more rows
+================================================================================
+
+================================================================================
+Query 14: What is the outstanding balance trend over all quarters?
+--------------------------------------------------------------------------------
+⚠️  AMBIGUOUS (Handled with clarifications)
+================================================================================
+
+================================================================================
+Query 15: Compare Q1 2024 vs Q4 2025 outstanding balance
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 2
+Explanation: The user is asking to compare the "outstanding balance" for two specific quarters. Since the query asks for a portfolio-level total (not a breakdown by product, region, etc.) and the `total_outstanding_balance` is a pre-computed metric available in the `computed_metrics` table, it is the most efficient and accurate table to use. The `accounts` table would require summing `adjusted_eop_balance` for each date, which is less direct for a pre-aggregated total.
+SQL: SELECT
+  as_of_date,
+  total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date IN ('2024-03-31', '2025-12-31')
+ORDER BY as_of_date;
+
+Results:
+  Row 1: {
+  "as_of_date": "2024-03-31",
+  "total_outstanding_balance": "9949178.00"
+}
+  Row 2: {
+  "as_of_date": "2025-12-31",
+  "total_outstanding_balance": "20144395.71"
+}
+================================================================================
+
+================================================================================
+Query 16: What is the total outstanding balance for Q3 2023?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 0
+Explanation: The user is asking for the "total outstanding balance" which is a portfolio-level aggregate without any breakdowns. The `computed_metrics` table contains the pre-calculated `total_outstanding_balance` metric, which is the most efficient and accurate source for this type of query.
+SQL: SELECT
+  total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date = '2023-09-30'
+
+No data returned (0 rows)
+================================================================================
+
+================================================================================
+Query 17: Show me outstanding balance for December 2020
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 0
+Explanation: The user is asking for the "outstanding balance" without any specific breakdowns (e.g., by product, region). This is a portfolio-level total. The `computed_metrics` table contains pre-aggregated portfolio totals, including `total_outstanding_balance`, which is ideal for such queries.
+SQL: SELECT
+  total_outstanding_balance
+FROM computed_metrics
+WHERE as_of_date = '2020-12-31'
+
+No data returned (0 rows)
+================================================================================
+
+================================================================================
+Query 18: What is the net charge-off rate for Q4 2024?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The user is asking for the "net charge-off rate," which is a complex ratio involving annualization. The routing rules explicitly state to ALWAYS use the `computed_metrics` table for this metric due to the complexity and error-proneness of its calculation. The query also asks for a portfolio-level metric for a specific quarter (Q4 2024), which aligns with the use cases for `computed_metrics`.
+SQL: SELECT net_charge_off_rate
+FROM computed_metrics
+WHERE as_of_date = '2024-12-31'
+
+Results:
+  Row 1: {
+  "net_charge_off_rate": "0.0155"
+}
+================================================================================
+
+================================================================================
+Query 19: Show me the number of accounts by ECL stage for the latest quarter
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 3
+Explanation: The query asks for a breakdown ("by ECL stage"), which requires granular data from the `accounts` table to group by the `ecl_stage` column. The `computed_metrics` table does not contain data broken down by ECL stage.
+SQL: SELECT
+  ecl_stage,
+  COUNT(account_id) AS number_of_accounts
+FROM accounts
+WHERE as_of_date = (SELECT MAX(as_of_date) FROM accounts)
+GROUP BY ecl_stage
+ORDER BY ecl_stage;
+
+Results:
+  Row 1: {
+  "ecl_stage": 1,
+  "number_of_accounts": 141
+}
+  Row 2: {
+  "ecl_stage": 2,
+  "number_of_accounts": 39
+}
+  Row 3: {
+  "ecl_stage": 3,
+  "number_of_accounts": 9
+}
+================================================================================
+
+================================================================================
+Query 20: What is the average credit score for subprime customers in the Southeast region for Q4 2024?
+--------------------------------------------------------------------------------
+✅ SUCCESS
+Rows: 1
+Explanation: The query asks for an average credit score for specific customer segments and regions. This requires filtering on `customer_segment` and `region_code`, which are granular attributes only available in the `accounts` table. The `computed_metrics` table does not contain credit scores or allow for such detailed breakdowns.
+SQL: SELECT
+  AVG(current_credit_score) AS average_credit_score
+FROM accounts
+WHERE
+  customer_segment = 'SUBPRIME'
+  AND region_code = 'Southeast'
+  AND as_of_date = '2024-12-31';
+
+Results:
+  Row 1: {
+  "average_credit_score": "572.8000000000000000"
+}
+================================================================================
+
+
+TEST SUMMARY
+================================================================================
+Total Queries:           20
+Successful:              17
+Ambiguous (Resolved):    4
+No Data (Expected):      2
+Failed:                  0
+Pass Rate:               115.0%

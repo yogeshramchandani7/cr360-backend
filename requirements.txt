@@ -1,0 +1,41 @@
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# LLM Integration
+google-generativeai==0.3.1
+
+# Database
+supabase==2.3.0
+psycopg2-binary==2.9.9
+sqlparse==0.4.4
+
+# YAML Processing
+pyyaml==6.0.1
+
+# Async & Task Queue (Phase 2)
+celery==5.3.4
+redis==5.0.1
+
+# Logging
+structlog==23.2.0
+python-json-logger==2.0.7
+
+# Environment
+python-dotenv==1.0.0
+
+# Validation & Parsing
+jsonschema==4.20.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.24.1
+
+# Development
+black==23.12.0
+ruff==0.1.7
+mypy==1.7.1

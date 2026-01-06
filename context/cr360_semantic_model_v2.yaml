@@ -1,0 +1,738 @@
+# =============================================================================
+# CR360 CREDIT RISK SEMANTIC MODEL - TWO-TIER ROUTING VERSION
+# =============================================================================
+# Version: 3.0
+# Last Updated: December 2025
+# Description: Account-level semantic model with intelligent query routing
+#              between accounts table (granular) and computed_metrics (aggregated)
+# Schema: Two-tier architecture for accuracy + performance
+# =============================================================================
+
+model:
+  name: cr360_credit_risk_analytics
+  version: "3.0"
+  database: postgresql  # Supabase
+  schema: public
+  default_currency: USD
+  reporting_entity: "TD Bank US Retail"
+  data_granularity: "Account-level with pre-computed aggregates"
+
+# =============================================================================
+# QUERY ROUTING LOGIC (CRITICAL FOR TWO-TIER ARCHITECTURE)
+# =============================================================================
+# This section guides the LLM to choose the correct table based on query type
+# WHY: Complex credit risk metrics require validated formulas (computed_metrics)
+#      while breakdowns need granular data (accounts)
+
+query_routing:
+  description: |
+    Two-tier query routing system:
+    - accounts table: 1,141 rows of account-level data (granular)
+    - computed_metrics table: 8 rows of pre-aggregated portfolio metrics (validated formulas)
+
+  use_computed_metrics_when:
+    - condition: "Portfolio-level aggregates without grouping"
+      examples:
+        - "What is the total outstanding balance?"
+        - "What is the portfolio delinquency rate?"
+        - "What is the overall NCO rate?"
+      rationale: "Pre-computed, validated formulas - no calculation risk"
+
+    - condition: "Complex ratios with annualization"
+      examples:
+        - "What is the net charge-off rate?"
+        - "What is the ECL coverage ratio?"
+        - "What is the return on equity?"
+      rationale: "Annualization and complex formulas are error-prone for LLMs"
+
+    - condition: "Query asks for 'total', 'overall', 'aggregate', or 'portfolio-level'"
+      examples:
+        - "Total exposure across all products"
+        - "Overall average credit score"
+      rationale: "No breakdown needed - use pre-computed totals"
+
+  use_accounts_when:
+    - condition: "Breakdowns with GROUP BY"
+      examples:
+        - "Show delinquency rate BY PRODUCT"
+        - "Compare exposure BY REGION"
+        - "Analyze by customer segment"
+      rationale: "Requires grouping granular data"
+
+    - condition: "Account-level filters"
+      examples:
+        - "Show Auto loans with credit score below 650"
+        - "List accounts 90+ days past due"
+        - "Find customers in the Southeast with high utilization"
+      rationale: "Filtering requires row-level data"
+
+    - condition: "Drill-downs and detailed views"
+      examples:
+        - "Show individual account details"
+        - "List top 10 accounts by balance"
+      rationale: "Account-level granularity needed"
+
+    - condition: "Time series across multiple periods"
+      examples:
+        - "Show monthly balance trends"
+        - "Track delinquency rate over 8 quarters"
+      rationale: "Multiple as_of_date values in one query"
+
+  critical_rule: |
+    NEVER calculate NCO rate, ECL coverage, or other complex ratios from accounts table.
+    ALWAYS use computed_metrics for metrics with annualization or complex denominators.
+
+# =============================================================================
+# DATABASE TABLES
+# =============================================================================
+
+tables:
+
+  # ---------------------------------------------------------------------------
+  # ACCOUNTS TABLE - Account-Level Granular Data
+  # ---------------------------------------------------------------------------
+  accounts:
+    description: "Account-level granular data - USE FOR BREAKDOWNS AND FILTERS"
+    row_count: 1141
+    granularity: "One row per account per quarter (8 quarters of data)"
+    primary_key: [account_id, as_of_date]
+    use_cases:
+      - "Breakdowns by product, region, segment, vintage"
+      - "Account-level filtering (credit score, DPD, status)"
+      - "Customer-level queries"
+      - "Drill-downs and detailed analysis"
+
+    columns:
+      # Identifiers
+      account_id:
+        type: VARCHAR(50)
+        description: "Unique account identifier"
+        example: "ACC-001"
+
+      customer_id:
+        type: VARCHAR(50)
+        description: "Customer identifier (multiple accounts per customer possible)"
+        example: "CUST-001"
+
+      customer_name:
+        type: VARCHAR(100)
+        description: "Customer name"
+        example: "John Smith"
+
+      # Classifications (denormalized - no FK to dimension tables)
+      product_code:
+        type: VARCHAR(10)
+        description: "Product type code"
+        values: [MTG, AUTO, CC, PL, HELOC]
+        value_meanings:
+          MTG: "Mortgage"
+          AUTO: "Auto Loan"
+          CC: "Credit Card"
+          PL: "Personal Loan"
+          HELOC: "Home Equity Line of Credit"
+
+      region_code:
+        type: VARCHAR(20)
+        description: "Geographic region"
+        values: [Northeast, Southeast, Midwest, West, Central]
+
+      customer_segment:
+        type: VARCHAR(20)
+        description: "Credit risk segment"
+        values: [PRIME, NEAR_PRIME, SUBPRIME]
+
+      application_channel:
+        type: VARCHAR(30)
+        description: "Origination channel"
+        values: [BRANCH, ONLINE, MOBILE, BROKER, DEALER, DIRECT_MAIL]
+
+      # Temporal
+      as_of_date:
+        type: DATE
+        description: "Reporting date (quarterly snapshots)"
+        note: "Part of composite primary key with account_id"
+
+      origination_date:
+        type: DATE
+        description: "Date account was opened"
+
+      funded_date:
+        type: DATE
+        description: "Date funds were disbursed"
+
+      vintage_year:
+        type: INTEGER
+        description: "Year account was originated"
+        example: 2024
+
+      age_on_book_months:
+        type: INTEGER
+        description: "Months since origination"
+
+      last_payment_date:
+        type: DATE
+        description: "Date of most recent payment"
+
+      # Financial Balances
+      adjusted_eop_balance:
+        type: DECIMAL(18,2)
+        description: "Outstanding balance at end of period"
+        note: "PRIMARY METRIC for exposure calculations"
+        formula: "EOP Balance + Accrued Interest + Deferred Fees - Unamortized Discount"
+
+      current_credit_limit:
+        type: DECIMAL(18,2)
+        description: "Current authorized credit limit"
+        note: "Used for utilization calculations"
+
+      funded_amount:
+        type: DECIMAL(18,2)
+        description: "Original funded amount"
+
+      exposure_at_default:
+        type: DECIMAL(18,2)
+        description: "Exposure if account defaults (for Basel ECL)"
+
+      current_property_value:
+        type: DECIMAL(18,2)
+        description: "Current property value (for secured loans)"
+
+      annual_income:
+        type: DECIMAL(18,2)
+        description: "Customer annual income"
+
+      last_payment_amount:
+        type: DECIMAL(18,2)
+        description: "Amount of last payment"
+
+      # Delinquency & Status
+      days_past_due:
+        type: INTEGER
+        description: "Days past due (0 = current, 1-29 = early delinquency, 30+ = delinquent)"
+        note: "Critical for delinquency rate calculations"
+
+      account_status:
+        type: VARCHAR(20)
+        description: "Account status"
+        values: [ACTIVE, CLOSED, PAID_OFF, CHARGED_OFF]
+
+      impaired_flag:
+        type: VARCHAR(1)
+        description: "Y if account is impaired (non-performing)"
+        values: [Y, N]
+
+      ecl_stage:
+        type: INTEGER
+        description: "IFRS 9 ECL stage"
+        values: [1, 2, 3]
+        value_meanings:
+          1: "Stage 1: Performing (12-month ECL)"
+          2: "Stage 2: Underperforming (lifetime ECL)"
+          3: "Stage 3: Credit-impaired (lifetime ECL)"
+
+      ever_30_dpd_flag:
+        type: VARCHAR(1)
+        description: "Y if account has ever been 30+ DPD"
+        values: [Y, N]
+
+      max_dpd_12m:
+        type: INTEGER
+        description: "Maximum DPD in last 12 months"
+
+      # Credit Scores & Risk
+      current_credit_score:
+        type: DECIMAL(10,2)
+        description: "Current credit score (FICO or equivalent)"
+        range: "300-850"
+
+      origination_credit_score:
+        type: DECIMAL(10,2)
+        description: "Credit score at origination"
+
+      twelve_month_pd:
+        type: DECIMAL(10,6)
+        description: "12-month probability of default (0-1)"
+
+      loss_given_default:
+        type: DECIMAL(10,4)
+        description: "Loss given default (0-1)"
+
+      expected_credit_loss:
+        type: DECIMAL(18,2)
+        description: "Expected credit loss amount (PD × LGD × EAD)"
+
+      # Loan Characteristics
+      current_ltv:
+        type: DECIMAL(10,4)
+        description: "Current loan-to-value ratio"
+
+      origination_ltv:
+        type: DECIMAL(10,4)
+        description: "LTV at origination"
+
+      debt_to_income:
+        type: DECIMAL(10,4)
+        description: "Debt-to-income ratio"
+
+      utilization_rate:
+        type: DECIMAL(10,4)
+        description: "Credit utilization (for revolving accounts)"
+
+      current_interest_rate:
+        type: DECIMAL(10,4)
+        description: "Current annual interest rate"
+
+      rate_type:
+        type: VARCHAR(20)
+        description: "Interest rate type"
+        values: [FIXED, VARIABLE]
+
+      original_term_months:
+        type: INTEGER
+        description: "Original loan term in months"
+
+      remaining_term_months:
+        type: INTEGER
+        description: "Remaining term in months"
+
+      # Loss Metrics
+      gross_charge_off_amount:
+        type: DECIMAL(18,2)
+        description: "Gross amount charged off"
+
+      recovery_amount_ytd:
+        type: DECIMAL(18,2)
+        description: "Amount recovered YTD after charge-off"
+
+      net_charge_off_ytd:
+        type: DECIMAL(18,2)
+        description: "Net charge-off (gross - recoveries)"
+
+  # ---------------------------------------------------------------------------
+  # COMPUTED_METRICS TABLE - Pre-Aggregated Portfolio Metrics
+  # ---------------------------------------------------------------------------
+  computed_metrics:
+    description: "Pre-aggregated portfolio metrics - USE FOR TOTALS AND COMPLEX RATIOS"
+    row_count: 8
+    granularity: "One row per quarter (8 quarters of data)"
+    primary_key: as_of_date
+    use_cases:
+      - "Portfolio-level totals without breakdowns"
+      - "Complex ratios with annualization (NCO rate, ROE)"
+      - "Metrics with validated formulas"
+      - "Dashboard summary statistics"
+
+    columns:
+      as_of_date:
+        type: DATE
+        description: "Reporting quarter-end date"
+        note: "Primary key"
+
+      # Portfolio Totals
+      total_outstanding_balance:
+        type: DECIMAL(18,2)
+        description: "Total portfolio outstanding balance"
+        formula: "SUM(adjusted_eop_balance) from accounts"
+
+      total_accounts:
+        type: INTEGER
+        description: "Total number of accounts"
+
+      num_active_accounts:
+        type: INTEGER
+        description: "Number of active accounts"
+
+      unique_customers:
+        type: INTEGER
+        description: "Number of unique customers"
+
+      # Delinquency Metrics
+      num_accounts_30_plus_dpd:
+        type: INTEGER
+        description: "Number of accounts 30+ days past due"
+
+      delinquency_rate_30_plus:
+        type: DECIMAL(10,4)
+        description: "30+ DPD delinquency rate (balance-weighted)"
+        formula: "SUM(balance where DPD >= 30) / SUM(total balance) * 100"
+        note: "PRE-COMPUTED with validated formula"
+
+      delinquent_amount_30_plus:
+        type: DECIMAL(18,2)
+        description: "Total balance 30+ DPD"
+
+      # Loss Metrics
+      total_gross_charge_off:
+        type: DECIMAL(18,2)
+        description: "Total gross charge-offs"
+
+      total_net_charge_off_ytd:
+        type: DECIMAL(18,2)
+        description: "Total net charge-offs YTD"
+
+      net_charge_off_rate:
+        type: DECIMAL(10,4)
+        description: "Annualized net charge-off rate"
+        formula: "(Net Charge-Offs YTD / Avg Balance) * (12 / months elapsed) * 100"
+        note: "ALWAYS use this - annualization is complex and error-prone"
+
+      # ECL Metrics
+      total_expected_credit_loss:
+        type: DECIMAL(18,2)
+        description: "Total expected credit loss"
+
+      ecl_coverage_ratio:
+        type: DECIMAL(10,4)
+        description: "ECL coverage ratio"
+        formula: "Total ECL / NPL Balance * 100"
+        note: "ALWAYS use this pre-computed value"
+
+      # Product Breakdown
+      num_accounts_mtg:
+        type: INTEGER
+        description: "Number of mortgage accounts"
+
+      balance_mtg:
+        type: DECIMAL(18,2)
+        description: "Total mortgage balance"
+
+      num_accounts_auto:
+        type: INTEGER
+        description: "Number of auto loan accounts"
+
+      balance_auto:
+        type: DECIMAL(18,2)
+        description: "Total auto loan balance"
+
+      num_accounts_cc:
+        type: INTEGER
+        description: "Number of credit card accounts"
+
+      balance_cc:
+        type: DECIMAL(18,2)
+        description: "Total credit card balance"
+
+      num_accounts_pl:
+        type: INTEGER
+        description: "Number of personal loan accounts"
+
+      balance_pl:
+        type: DECIMAL(18,2)
+        description: "Total personal loan balance"
+
+      num_accounts_heloc:
+        type: INTEGER
+        description: "Number of HELOC accounts"
+
+      balance_heloc:
+        type: DECIMAL(18,2)
+        description: "Total HELOC balance"
+
+# =============================================================================
+# METRIC DEFINITIONS (WITH DUAL FORMULAS)
+# =============================================================================
+
+metrics:
+
+  # ---------------------------------------------------------------------------
+  # EXPOSURE METRICS
+  # ---------------------------------------------------------------------------
+
+  gross_credit_exposure:
+    display_name: "Gross Credit Exposure"
+    category: exposure
+    description: "Total outstanding balance across the portfolio"
+    unit: "USD"
+
+    # FROM ACCOUNTS TABLE (when breakdown needed)
+    formula_accounts: "SUM(adjusted_eop_balance)"
+    sql_accounts: |
+      SELECT
+        SUM(adjusted_eop_balance) as gross_credit_exposure
+      FROM accounts
+      WHERE as_of_date = %(as_of_date)s
+
+    # FROM COMPUTED_METRICS TABLE (portfolio total)
+    formula_computed: "total_outstanding_balance"
+    sql_computed: |
+      SELECT
+        total_outstanding_balance as gross_credit_exposure
+      FROM computed_metrics
+      WHERE as_of_date = %(as_of_date)s
+
+    routing_hint: |
+      - Use accounts if query has GROUP BY (by product, region, segment)
+      - Use computed_metrics if query asks for "total" or "overall" or "portfolio"
+
+    example_queries:
+      portfolio_total: "What is the total credit exposure?"  # → computed_metrics
+      by_product: "What is the credit exposure by product?"  # → accounts with GROUP BY
+      by_region: "Show exposure for Southeast region"  # → accounts with WHERE
+
+  # ---------------------------------------------------------------------------
+  # DELINQUENCY METRICS
+  # ---------------------------------------------------------------------------
+
+  delinquency_rate_30_plus:
+    display_name: "30+ Day Delinquency Rate"
+    category: delinquency
+    description: "Percentage of portfolio balance that is 30+ days past due"
+    unit: "percent"
+
+    # FROM ACCOUNTS TABLE (calculated on the fly)
+    formula_accounts: |
+      SUM(CASE WHEN days_past_due >= 30 THEN adjusted_eop_balance ELSE 0 END) /
+      NULLIF(SUM(adjusted_eop_balance), 0) * 100
+
+    sql_accounts: |
+      SELECT
+        SUM(CASE WHEN days_past_due >= 30 THEN adjusted_eop_balance ELSE 0 END) /
+        NULLIF(SUM(adjusted_eop_balance), 0) * 100 as delinquency_rate_30_plus
+      FROM accounts
+      WHERE as_of_date = %(as_of_date)s
+
+    # FROM COMPUTED_METRICS TABLE (pre-calculated)
+    formula_computed: "delinquency_rate_30_plus"
+    sql_computed: |
+      SELECT
+        delinquency_rate_30_plus
+      FROM computed_metrics
+      WHERE as_of_date = %(as_of_date)s
+
+    routing_hint: |
+      - Use computed_metrics for portfolio-level rate
+      - Use accounts for breakdown by product/region/segment
+
+    validation_note: |
+      When using accounts table, the calculated rate should match the pre-computed
+      rate in computed_metrics for the same as_of_date (validation check)
+
+    example_queries:
+      portfolio_rate: "What is the portfolio delinquency rate?"  # → computed_metrics
+      by_product: "What is the delinquency rate by product?"  # → accounts
+      filtered: "What is delinquency rate for Prime customers?"  # → accounts
+
+  # ---------------------------------------------------------------------------
+  # LOSS METRICS
+  # ---------------------------------------------------------------------------
+
+  net_charge_off_rate:
+    display_name: "Net Charge-Off Rate"
+    category: loss
+    description: "Annualized net charge-off rate"
+    unit: "percent"
+
+    # FROM ACCOUNTS TABLE (RISKY - complex annualization)
+    formula_accounts: |
+      (SUM(net_charge_off_ytd) / NULLIF(AVG(adjusted_eop_balance), 0)) *
+      (12 / EXTRACT(MONTH FROM as_of_date)) * 100
+    warning: "Complex annualization formula - PREFER computed_metrics for accuracy"
+
+    # FROM COMPUTED_METRICS TABLE (validated formula - RECOMMENDED)
+    formula_computed: "net_charge_off_rate"
+    sql_computed: |
+      SELECT
+        net_charge_off_rate
+      FROM computed_metrics
+      WHERE as_of_date = %(as_of_date)s
+
+    routing_hint: |
+      ALWAYS use computed_metrics for NCO rate - annualization is error-prone.
+      Only use accounts if breakdown by product/region is explicitly requested.
+
+    critical_note: |
+      NCO rate calculation requires:
+      1. Year-to-date charge-offs
+      2. Average balance (not EOP balance)
+      3. Annualization factor based on months elapsed
+      LLMs frequently make errors in this calculation - use pre-computed value.
+
+  # ---------------------------------------------------------------------------
+  # ECL METRICS
+  # ---------------------------------------------------------------------------
+
+  ecl_coverage_ratio:
+    display_name: "ECL Coverage Ratio"
+    category: ecl
+    description: "Expected credit loss as percentage of non-performing loans"
+    unit: "percent"
+
+    # FROM ACCOUNTS TABLE (complex - requires NPL calculation)
+    formula_accounts: |
+      SUM(expected_credit_loss) /
+      NULLIF(SUM(CASE WHEN days_past_due >= 90 OR impaired_flag = 'Y' THEN adjusted_eop_balance ELSE 0 END), 0) * 100
+    warning: "Complex NPL definition - PREFER computed_metrics"
+
+    # FROM COMPUTED_METRICS TABLE (validated formula - RECOMMENDED)
+    formula_computed: "ecl_coverage_ratio"
+    sql_computed: |
+      SELECT
+        ecl_coverage_ratio
+      FROM computed_metrics
+      WHERE as_of_date = %(as_of_date)s
+
+    routing_hint: |
+      ALWAYS use computed_metrics for ECL coverage ratio.
+      Only calculate from accounts if breakdown by product is required.
+
+# =============================================================================
+# SQL GENERATION PATTERNS
+# =============================================================================
+
+sql_generation_guidance:
+
+  pattern_1_portfolio_total:
+    description: "Query for overall portfolio metric without breakdowns"
+    recommended_table: computed_metrics
+    example_query: "What is the total delinquency rate?"
+    sql_template: |
+      SELECT delinquency_rate_30_plus
+      FROM computed_metrics
+      WHERE as_of_date = (SELECT MAX(as_of_date) FROM computed_metrics)
+
+    when_to_use:
+      - "Query contains 'total', 'overall', 'portfolio', 'aggregate'"
+      - "No GROUP BY dimensions mentioned"
+      - "Metric is available in computed_metrics table"
+
+  pattern_2_breakdown_by_dimension:
+    description: "Query with GROUP BY (by product, region, segment, etc.)"
+    recommended_table: accounts
+    example_query: "What is the delinquency rate by product?"
+    sql_template: |
+      SELECT
+        product_code,
+        SUM(CASE WHEN days_past_due >= 30 THEN adjusted_eop_balance ELSE 0 END) /
+        NULLIF(SUM(adjusted_eop_balance), 0) * 100 as delinquency_rate_30_plus
+      FROM accounts
+      WHERE as_of_date = %(as_of_date)s
+      GROUP BY product_code
+      ORDER BY delinquency_rate_30_plus DESC
+
+    when_to_use:
+      - "Query contains 'by product', 'by region', 'by segment', 'breakdown'"
+      - "Requires GROUP BY clause"
+      - "Need granular data aggregation"
+
+  pattern_3_account_filter:
+    description: "Query filtering by account-level attributes"
+    recommended_table: accounts
+    example_query: "Show me Auto loans with credit score below 650"
+    sql_template: |
+      SELECT
+        account_id,
+        customer_id,
+        current_credit_score,
+        adjusted_eop_balance,
+        days_past_due
+      FROM accounts
+      WHERE product_code = 'AUTO'
+        AND current_credit_score < 650
+        AND as_of_date = %(as_of_date)s
+      ORDER BY adjusted_eop_balance DESC
+      LIMIT 100
+
+    when_to_use:
+      - "Query filters on account-level attributes (credit score, DPD, status)"
+      - "Need row-level detail"
+      - "Customer or account-specific queries"
+
+  pattern_4_time_series:
+    description: "Time series analysis across multiple quarters"
+    recommended_table: accounts
+    example_query: "Show delinquency rate trend over the last 4 quarters"
+    sql_template: |
+      SELECT
+        as_of_date,
+        SUM(CASE WHEN days_past_due >= 30 THEN adjusted_eop_balance ELSE 0 END) /
+        NULLIF(SUM(adjusted_eop_balance), 0) * 100 as delinquency_rate_30_plus
+      FROM accounts
+      WHERE as_of_date >= %(start_date)s
+      GROUP BY as_of_date
+      ORDER BY as_of_date
+
+    when_to_use:
+      - "Query mentions 'trend', 'over time', 'historical'"
+      - "Multiple time periods in single query"
+      - "Time series analysis"
+
+# =============================================================================
+# DIMENSIONS (Denormalized)
+# =============================================================================
+
+dimensions:
+
+  product:
+    description: "Product type"
+    column: product_code
+    table: accounts
+    values: [MTG, AUTO, CC, PL, HELOC]
+    value_labels:
+      MTG: "Mortgage"
+      AUTO: "Auto Loan"
+      CC: "Credit Card"
+      PL: "Personal Loan"
+      HELOC: "Home Equity Line of Credit"
+
+  region:
+    description: "Geographic region"
+    column: region_code
+    table: accounts
+    values: [Northeast, Southeast, Midwest, West, Central]
+
+  segment:
+    description: "Customer credit risk segment"
+    column: customer_segment
+    table: accounts
+    values: [PRIME, NEAR_PRIME, SUBPRIME]
+
+  channel:
+    description: "Application/origination channel"
+    column: application_channel
+    table: accounts
+    values: [BRANCH, ONLINE, MOBILE, BROKER, DEALER, DIRECT_MAIL]
+
+  status:
+    description: "Account status"
+    column: account_status
+    table: accounts
+    values: [ACTIVE, CLOSED, PAID_OFF, CHARGED_OFF]
+
+# =============================================================================
+# VALIDATION RULES
+# =============================================================================
+
+validation:
+
+  cross_table_reconciliation:
+    description: "Validate that aggregations from accounts match computed_metrics"
+
+    test_1_total_balance:
+      check: "SUM(adjusted_eop_balance) from accounts should equal total_outstanding_balance from computed_metrics"
+      sql_accounts: "SELECT SUM(adjusted_eop_balance) FROM accounts WHERE as_of_date = %(date)s"
+      sql_computed: "SELECT total_outstanding_balance FROM computed_metrics WHERE as_of_date = %(date)s"
+      tolerance: 0.01  # Allow $0.01 difference due to rounding
+
+    test_2_delinquency_rate:
+      check: "Delinquency rate calculated from accounts should match pre-computed rate"
+      tolerance_percent: 0.001  # 0.001% tolerance
+
+  llm_calculation_confidence:
+    simple_aggregations:
+      confidence: "HIGH"
+      examples: ["SUM(balance)", "COUNT(*)", "AVG(score)"]
+      action: "Allow LLM to calculate from accounts table"
+
+    ratios_without_annualization:
+      confidence: "MEDIUM"
+      examples: ["Delinquency rate", "Utilization rate", "LTV ratio"]
+      action: "Validate against computed_metrics when available"
+
+    complex_ratios_with_annualization:
+      confidence: "ZERO"
+      examples: ["NCO rate", "ROE", "ROA"]
+      action: "FORCE use of computed_metrics table - never calculate from accounts"
+
+# =============================================================================
+# END OF SEMANTIC MODEL
+# =============================================================================

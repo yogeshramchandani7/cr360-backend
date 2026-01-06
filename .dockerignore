@@ -1,0 +1,54 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.env
+.env.local
+.venv/
+venv/
+ENV/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+tests/
+
+# Version control
+.git/
+.gitignore
+
+# IDEs
+.vscode/
+.idea/
+
+# Documentation
+*.md
+README.md
+SEMANTIC_MODEL_MIGRATION.md
+TEST_QUERIES.md
+TEST_RESULTS_SUMMARY.md
+cr360_genai_architecture.md
+
+# Logs
+*.log
+
+# Frontend
+cr360-frontend/
+
+# Docker
+docker-compose.yml
+Dockerfile.dev
+
+# Misc
+.DS_Store

@@ -1,0 +1,1909 @@
+# =============================================================================
+# CR360 CREDIT RISK SEMANTIC MODEL - ENHANCED VERSION
+# =============================================================================
+# Version: 2.0
+# Last Updated: December 2025
+# Description: Complete semantic model with taxonomy, metric relationships,
+#              derivation chains, and credit risk domain expertise
+# Token Estimate: ~35,000 tokens
+# =============================================================================
+
+model:
+  name: cr360_credit_risk_analytics
+  version: "2.0"
+  database: postgresql  # Supabase
+  schema: public
+  default_currency: USD
+  reporting_entity: "TD Bank US Retail"
+
+# =============================================================================
+# SECTION 1: METRIC TAXONOMY
+# =============================================================================
+# Hierarchical classification of all credit risk metrics
+# This helps the LLM understand metric families and relationships
+
+taxonomy:
+  
+  # ===========================================================================
+  # LEVEL 1: EXPOSURE METRICS
+  # ===========================================================================
+  exposure:
+    description: "Metrics measuring the bank's credit exposure and balance sheet positions"
+    business_purpose: "Quantify the total credit at risk across the portfolio"
+    risk_relevance: "Foundation for all risk calculations - higher exposure = higher potential loss"
+    
+    subcategories:
+      
+      gross_exposure:
+        description: "Total credit exposure before any risk mitigation"
+        metrics:
+          - gross_credit_exposure
+          - total_committed_exposure
+          - exposure_at_default
+        relationships:
+          - "Gross Exposure >= Net Exposure (always)"
+          - "Gross Exposure = Outstanding + Undrawn Commitments"
+          - "Used as denominator for concentration ratios"
+          
+      net_exposure:
+        description: "Credit exposure after deducting collateral and mitigants"
+        metrics:
+          - net_credit_exposure
+          - unsecured_exposure
+        relationships:
+          - "Net Exposure = Gross Exposure - Mitigant Value"
+          - "Net Exposure drives economic capital requirements"
+          
+      outstanding_balance:
+        description: "Actual amounts drawn and owed by borrowers"
+        metrics:
+          - adjusted_eop_balance
+          - eop_balance
+          - previous_eop_balance
+          - drawn_amount
+        relationships:
+          - "Outstanding <= Credit Limit (except overlimit)"
+          - "Outstanding is the base for delinquency calculations"
+          - "Change in Outstanding = Drawdowns - Payments - Charge-offs"
+          
+      credit_limits:
+        description: "Maximum credit available to borrowers"
+        metrics:
+          - current_credit_limit
+          - original_credit_limit
+          - available_credit
+        relationships:
+          - "Available Credit = Credit Limit - Outstanding"
+          - "Utilization = Outstanding / Credit Limit"
+          - "Limit changes require credit decisioning"
+          
+      commitments:
+        description: "Undrawn credit facilities and contingent exposures"
+        metrics:
+          - undrawn_commitment
+          - contingent_exposure
+          - off_balance_sheet_exposure
+        relationships:
+          - "Total Exposure = Outstanding + Undrawn * CCF"
+          - "CCF (Credit Conversion Factor) models drawdown at default"
+
+  # ===========================================================================
+  # LEVEL 2: DELINQUENCY METRICS  
+  # ===========================================================================
+  delinquency:
+    description: "Metrics measuring payment behavior and past-due status"
+    business_purpose: "Early warning system for credit deterioration"
+    risk_relevance: "Leading indicator of future losses - delinquency precedes default"
+    
+    subcategories:
+      
+      delinquency_flags:
+        description: "Binary indicators of delinquency status"
+        metrics:
+          - delinquent_flag
+          - dpd_30_flag
+          - dpd_60_flag
+          - dpd_90_flag
+        relationships:
+          - "DPD 90 ⊂ DPD 60 ⊂ DPD 30 ⊂ Delinquent (nested sets)"
+          - "Flags drive provisioning stage classification (IFRS 9)"
+          - "DPD 90+ typically triggers NPL classification"
+          
+      delinquency_amounts:
+        description: "Dollar amounts in delinquent status"
+        metrics:
+          - delinquent_balance
+          - dpd_30_balance
+          - dpd_60_balance
+          - dpd_90_balance
+        relationships:
+          - "Delinquent Balance = Outstanding * Delinquent Flag"
+          - "Delinquency Rate = Delinquent Balance / Total Outstanding"
+          - "Weighted by balance gives dollar-weighted delinquency"
+          
+      delinquency_rates:
+        description: "Percentage of portfolio in delinquent status"
+        metrics:
+          - delinquency_rate_30
+          - delinquency_rate_60
+          - delinquency_rate_90
+          - delinquency_rate_count
+        relationships:
+          - "Rate (Balance) = Delinquent Balance / Total Outstanding"
+          - "Rate (Count) = Delinquent Accounts / Total Accounts"
+          - "Balance rate typically > Count rate (larger loans more likely delinquent)"
+          
+      delinquency_flow:
+        description: "Movement between delinquency states"
+        metrics:
+          - roll_rate_current_to_30
+          - roll_rate_30_to_60
+          - roll_rate_60_to_90
+          - cure_rate
+        relationships:
+          - "Roll Rate = Accounts moving to worse bucket / Starting accounts"
+          - "Cure Rate = Accounts returning to current / Delinquent accounts"
+          - "Roll rates predict future charge-offs"
+
+  # ===========================================================================
+  # LEVEL 3: LOSS METRICS
+  # ===========================================================================
+  loss:
+    description: "Metrics measuring actual and expected credit losses"
+    business_purpose: "Quantify realized losses and predict future losses"
+    risk_relevance: "Direct P&L impact - losses reduce earnings and capital"
+    
+    subcategories:
+      
+      charge_offs:
+        description: "Loans written off as uncollectible"
+        metrics:
+          - gross_charge_off
+          - net_charge_off
+          - net_charge_off_rate
+        relationships:
+          - "Net Charge-off = Gross Charge-off - Recoveries"
+          - "NCO Rate = Net Charge-off / Average Outstanding"
+          - "Annualized NCO = Quarterly NCO * 4"
+          
+      recoveries:
+        description: "Amounts recovered on previously charged-off loans"
+        metrics:
+          - recovery_amount
+          - recovery_rate
+        data_availability:
+          status: "NOT_AVAILABLE"
+          note: "Database schema does not include separate gross_charge_off and recovery columns. Use net_charge_off_rate as proxy metric."
+          proxy_metric: "net_charge_off_rate"
+        relationships:
+          - "Recovery Rate = Recoveries / Prior Charge-offs"
+          - "LGD = 1 - Recovery Rate"
+          - "Recoveries lag charge-offs by 6-24 months typically"
+          
+      provisions:
+        description: "Allowance for credit losses (balance sheet reserve)"
+        metrics:
+          - allowance_balance
+          - provision_expense
+          - ecl_balance
+        relationships:
+          - "Allowance = Opening + Provision - Charge-offs + Recoveries"
+          - "Coverage Ratio = Allowance / NPL Balance"
+          - "ECL = PD * LGD * EAD (simplified)"
+          
+      expected_loss:
+        description: "Forward-looking loss estimates"
+        metrics:
+          - expected_credit_loss
+          - lifetime_ecl
+          - twelve_month_ecl
+        relationships:
+          - "12-month ECL = PD_12m * LGD * EAD"
+          - "Lifetime ECL used for Stage 2/3 (IFRS 9)"
+          - "ECL drives P&L provision expense"
+
+  # ===========================================================================
+  # LEVEL 4: RISK SCORE METRICS
+  # ===========================================================================
+  risk_scores:
+    description: "Credit scores and risk ratings"
+    business_purpose: "Quantify borrower creditworthiness and default risk"
+    risk_relevance: "Predictive of future performance - lower scores = higher risk"
+    
+    subcategories:
+      
+      bureau_scores:
+        description: "External credit bureau scores (FICO, VantageScore)"
+        metrics:
+          - current_credit_score
+          - origination_credit_score
+          - credit_score_change
+        relationships:
+          - "Score Range: 300-850 (FICO)"
+          - "Higher Score = Lower PD"
+          - "Score Change = Current Score - Origination Score"
+          
+      internal_scores:
+        description: "Bank's proprietary risk scores"
+        metrics:
+          - behavioral_score
+          - application_score
+          - collection_score
+        relationships:
+          - "Behavioral Score uses payment history"
+          - "Application Score uses origination data"
+          - "Scores calibrated to predict PD"
+          
+      probability_of_default:
+        description: "Statistical probability of borrower defaulting"
+        metrics:
+          - twelve_month_pd
+          - lifetime_pd
+          - through_the_cycle_pd
+        relationships:
+          - "PD Range: 0% to 100%"
+          - "PD increases as Score decreases"
+          - "PD is key input to ECL calculation"
+
+  # ===========================================================================
+  # LEVEL 5: COLLATERAL METRICS
+  # ===========================================================================
+  collateral:
+    description: "Metrics related to loan security and collateral"
+    business_purpose: "Measure secured exposure and collateral adequacy"
+    risk_relevance: "Collateral reduces loss severity - determines LGD"
+    
+    subcategories:
+      
+      ltv_metrics:
+        description: "Loan-to-Value ratios"
+        metrics:
+          - current_ltv
+          - origination_ltv
+          - combined_ltv
+        relationships:
+          - "LTV = Loan Balance / Property Value"
+          - "CLTV includes all liens on property"
+          - "LTV > 80% typically requires mortgage insurance"
+          
+      collateral_values:
+        description: "Value of pledged collateral"
+        metrics:
+          - collateral_value
+          - mitigant_value
+          - appraised_value
+        relationships:
+          - "Collateral Value subject to haircuts"
+          - "Mitigant Value = Collateral * (1 - Haircut)"
+          - "Negative Equity = Outstanding > Collateral Value"
+
+  # ===========================================================================
+  # LEVEL 6: ORIGINATION METRICS
+  # ===========================================================================
+  origination:
+    description: "Metrics related to new loan production"
+    business_purpose: "Track portfolio growth and underwriting quality"
+    risk_relevance: "Origination quality determines future performance"
+    
+    subcategories:
+      
+      volume_metrics:
+        description: "New loan production volumes"
+        metrics:
+          - origination_volume
+          - origination_count
+          - funded_volume
+        relationships:
+          - "Funded Volume <= Approved Volume (pull-through)"
+          - "Origination drives portfolio growth"
+          - "Volume weighted by risk = risk-adjusted production"
+          
+      quality_metrics:
+        description: "Underwriting quality indicators"
+        metrics:
+          - approval_rate
+          - funding_rate
+          - average_origination_score
+        relationships:
+          - "Higher Approval Rate may indicate loosening standards"
+          - "Origination Score predicts vintage performance"
+          - "DTI at origination indicates affordability"
+
+  # ===========================================================================
+  # LEVEL 7: BEHAVIORAL METRICS
+  # ===========================================================================
+  behavioral:
+    description: "Metrics tracking borrower behavior patterns"
+    business_purpose: "Early warning signals and customer segmentation"
+    risk_relevance: "Behavior changes predict future delinquency"
+    
+    subcategories:
+      
+      utilization:
+        description: "Credit usage relative to limits"
+        metrics:
+          - utilization_rate
+          - available_credit
+          - overlimit_flag
+        relationships:
+          - "Utilization = Outstanding / Credit Limit"
+          - "High Utilization (>80%) indicates financial stress"
+          - "Utilization correlates with future delinquency"
+          
+      payment_behavior:
+        description: "Payment patterns and history"
+        metrics:
+          - minimum_payment_ratio
+          - full_payment_flag
+          - payment_frequency
+        relationships:
+          - "Minimum payers have higher default risk"
+          - "Payment behavior drives behavioral score"
+
+
+# =============================================================================
+# SECTION 2: DETAILED METRIC DEFINITIONS WITH RELATIONSHIPS
+# =============================================================================
+
+metrics:
+
+  # ===========================================================================
+  # EXPOSURE METRICS - DETAILED
+  # ===========================================================================
+  
+  gross_credit_exposure:
+    display_name: "Gross Credit Exposure"
+    category: exposure.gross_exposure
+    bp_code: BPCRA013
+    
+    definition:
+      short: "Total credit exposure before risk mitigation"
+      extended: |
+        Gross Credit Exposure represents the total potential loss the bank faces 
+        from a borrower before considering any collateral, guarantees, or other 
+        risk mitigants. It includes both drawn amounts (outstanding balance) and 
+        undrawn commitments (available credit that could be drawn).
+        
+        For revolving products (credit cards, HELOCs), this includes the full 
+        credit limit since the borrower can draw up to the limit. For term loans, 
+        it equals the outstanding principal balance.
+        
+        This is the starting point for all exposure calculations and is used as 
+        the denominator for concentration risk metrics.
+    
+    formula:
+      primary: "Outstanding Balance + (Undrawn Commitment * Credit Conversion Factor)"
+      simplified: "SUM(GROSS_CREDIT_EXPOSURE)"
+      sql: "SUM(f.GROSS_CREDIT_EXPOSURE)"
+    
+    components:
+      - metric: adjusted_eop_balance
+        relationship: "component"
+        description: "The drawn/outstanding portion of exposure"
+      - metric: undrawn_commitment
+        relationship: "component"
+        description: "The undrawn portion, adjusted by CCF"
+      - metric: credit_conversion_factor
+        relationship: "multiplier"
+        description: "Probability that undrawn will be drawn at default (typically 50-75%)"
+    
+    related_metrics:
+      - metric: net_credit_exposure
+        relationship: "derived_from"
+        description: "Net Exposure = Gross Exposure - Mitigant Value"
+      - metric: exposure_at_default
+        relationship: "similar_concept"
+        description: "EAD is the regulatory/IFRS9 version of this concept"
+      - metric: total_outstanding
+        relationship: "subset"
+        description: "Outstanding is the drawn portion only"
+    
+    aggregation_rules:
+      - level: account
+        method: "direct value"
+      - level: portfolio
+        method: "SUM"
+      - level: weighted_average
+        method: "Not applicable - use sum"
+    
+    drill_down_path:
+      - "Total Portfolio"
+      - "By Product"
+      - "By Region"
+      - "By Segment"
+      - "By Vintage"
+      - "Individual Account"
+    
+    business_interpretation:
+      increasing: "Portfolio growth OR increased commitment utilization"
+      decreasing: "Portfolio runoff OR limit reductions OR charge-offs"
+      benchmark: "Compare to prior period, budget, and peer banks"
+    
+    data_quality_checks:
+      - "Must be >= 0"
+      - "Must be >= Outstanding Balance"
+      - "Should reconcile to GL"
+    
+    synonyms:
+      - "total exposure"
+      - "credit exposure"
+      - "GCE"
+      - "total credit"
+      - "exposure"
+
+  # ---------------------------------------------------------------------------
+  
+  adjusted_eop_balance:
+    display_name: "Adjusted End-of-Period Balance"
+    category: exposure.outstanding_balance
+    bp_code: BPCRA097
+    
+    definition:
+      short: "Outstanding balance at period end after adjustments"
+      extended: |
+        The Adjusted EOP Balance represents the actual amount owed by the borrower 
+        at the end of the reporting period, after applying necessary adjustments 
+        such as:
+        - Deferred fees and costs
+        - Unamortized discount/premium
+        - Accrued interest (if applicable)
+        - Currency translation adjustments
+        
+        This is the primary balance metric used for most risk calculations because 
+        it represents the economically meaningful exposure that could become a loss.
+        
+        For IFRS 9 purposes, this aligns with the "gross carrying amount" concept.
+    
+    formula:
+      primary: "EOP Balance + Accrued Interest + Deferred Fees - Unamortized Discount"
+      simplified: "SUM(ADJUSTED_EOP_BALANCE_RCY)"
+      sql: "SUM(a.TOTAL_OUTSTANDING)"
+    
+    components:
+      - metric: eop_balance
+        relationship: "base"
+        description: "The raw end-of-period principal balance"
+      - metric: accrued_interest
+        relationship: "addition"
+        description: "Interest earned but not yet collected"
+      - metric: deferred_fees
+        relationship: "adjustment"
+        description: "Origination fees being amortized"
+    
+    related_metrics:
+      - metric: gross_credit_exposure
+        relationship: "component_of"
+        description: "Outstanding is part of total exposure"
+      - metric: delinquent_balance
+        relationship: "derived_from"
+        description: "Delinquent Balance = Outstanding * Delinquent Flag"
+      - metric: previous_eop_balance
+        relationship: "prior_period"
+        description: "Used for change analysis"
+      - metric: utilization_rate
+        relationship: "numerator_for"
+        description: "Utilization = Outstanding / Credit Limit"
+    
+    aggregation_rules:
+      - level: account
+        method: "direct value"
+      - level: portfolio
+        method: "SUM"
+    
+    business_interpretation:
+      increasing: "New originations > (payments + charge-offs + payoffs)"
+      decreasing: "Portfolio shrinking due to payments or losses"
+    
+    synonyms:
+      - "outstanding balance"
+      - "outstanding"
+      - "balance"
+      - "loan balance"
+      - "AOB"
+      - "total outstanding"
+
+  # ---------------------------------------------------------------------------
+
+  current_credit_limit:
+    display_name: "Current Credit Limit"
+    category: exposure.credit_limits
+    bp_code: BPCRA096
+    
+    definition:
+      short: "Maximum credit currently available to borrower"
+      extended: |
+        The Current Credit Limit (CCL) represents the maximum amount the borrower 
+        is authorized to draw. For revolving products (credit cards, HELOCs), 
+        this is the credit line amount. For term loans, this equals the original 
+        loan amount (or remaining balance for amortizing loans).
+        
+        Credit limits can change over time due to:
+        - Line increases (credit reviews, customer requests)
+        - Line decreases (risk management actions, customer requests)
+        - Automatic limit adjustments (behavior-based programs)
+        
+        The relationship between Outstanding and Limit drives utilization, 
+        which is a key behavioral risk indicator.
+    
+    formula:
+      primary: "Current authorized credit line"
+      sql: "SUM(a.TOTAL_CREDIT_LIMIT)"
+    
+    related_metrics:
+      - metric: adjusted_eop_balance
+        relationship: "compared_with"
+        description: "Outstanding should be <= Limit (except overlimit)"
+      - metric: utilization_rate
+        relationship: "denominator_for"
+        description: "Utilization = Outstanding / Limit"
+      - metric: available_credit
+        relationship: "derived"
+        description: "Available = Limit - Outstanding"
+      - metric: original_credit_limit
+        relationship: "prior_value"
+        description: "OCL is the limit at origination"
+    
+    business_interpretation:
+      increasing: "Line increases or new originations with higher limits"
+      decreasing: "Line cuts (risk management) or account closures"
+    
+    synonyms:
+      - "credit limit"
+      - "credit line"
+      - "CCL"
+      - "limit"
+      - "line amount"
+
+  # ===========================================================================
+  # DELINQUENCY METRICS - DETAILED
+  # ===========================================================================
+
+  delinquency_rate_30:
+    display_name: "30+ Day Delinquency Rate"
+    category: delinquency.delinquency_rates
+    bp_code: BPCRA081
+    
+    definition:
+      short: "Percentage of portfolio 30+ days past due"
+      extended: |
+        The 30+ Day Delinquency Rate measures the proportion of the portfolio 
+        that is at least one payment cycle past due. This is a critical early 
+        warning indicator because:
+        
+        1. It captures accounts beginning to show stress
+        2. It's a leading indicator (precedes charge-offs by 3-6 months)
+        3. It triggers enhanced monitoring and collection efforts
+        4. It may trigger Stage 2 classification under IFRS 9
+        
+        Can be calculated on a balance basis (dollar-weighted) or count basis 
+        (account-weighted). Balance basis is more common as it reflects 
+        economic exposure.
+        
+        Industry standard thresholds:
+        - Prime portfolios: < 2%
+        - Near-prime: 2-5%
+        - Subprime: 5-15%
+    
+    formula:
+      primary: "SUM(Balance where DPD >= 30) / SUM(Total Outstanding) * 100"
+      sql: |
+        ROUND(
+          SUM(CASE WHEN DPD_30_FLAG = 'Y' THEN ADJUSTED_EOP_BALANCE_RCY ELSE 0 END) /
+          NULLIF(SUM(ADJUSTED_EOP_BALANCE_RCY), 0) * 100, 
+          2
+        )
+      alternate_count: |
+        ROUND(
+          SUM(CASE WHEN DPD_30_FLAG = 'Y' THEN 1 ELSE 0 END)::DECIMAL /
+          NULLIF(COUNT(*), 0) * 100,
+          2
+        )
+    
+    components:
+      - metric: dpd_30_balance
+        relationship: "numerator"
+        description: "Total balance of accounts 30+ days past due"
+      - metric: adjusted_eop_balance
+        relationship: "denominator"
+        description: "Total outstanding balance"
+      - metric: dpd_30_flag
+        relationship: "indicator"
+        description: "Y/N flag for each account"
+    
+    related_metrics:
+      - metric: delinquency_rate_60
+        relationship: "subset"
+        description: "60+ DPD is a subset of 30+ DPD"
+      - metric: delinquency_rate_90
+        relationship: "subset"
+        description: "90+ DPD is a subset of 30+ DPD"
+      - metric: roll_rate_current_to_30
+        relationship: "flow_into"
+        description: "Roll rate determines how current accounts become 30+ DPD"
+      - metric: net_charge_off_rate
+        relationship: "leads"
+        description: "Delinquency is a leading indicator of future charge-offs"
+      - metric: ecl_balance
+        relationship: "drives"
+        description: "Higher delinquency drives higher ECL provisions"
+    
+    aggregation_rules:
+      - level: account
+        method: "Flag (Y/N)"
+      - level: portfolio
+        method: "Weighted average (balance-weighted)"
+      - level: comparison
+        method: "Calculate rate for each segment separately"
+    
+    drill_down_path:
+      - "Total 30+ DPD Rate"
+      - "By Product (Mortgage vs Auto Loan vs Card)"
+      - "By Region"
+      - "By Segment (Prime/Subprime)"
+      - "By Vintage"
+      - "By DPD Bucket (30-59, 60-89, 90+)"
+    
+    business_interpretation:
+      increasing: |
+        - Economic stress affecting borrowers
+        - Underwriting standards may have loosened
+        - Collection effectiveness declining
+        - Seasonal patterns (Q1 typically higher)
+      decreasing: |
+        - Economic improvement
+        - Effective collection efforts
+        - Portfolio seasoning past peak delinquency
+        - Tighter underwriting reducing new delinquencies
+      threshold_alert: "> 2.5% for prime, > 5% for near-prime"
+      threshold_critical: "> 4% for prime, > 8% for near-prime"
+    
+    leading_indicators:
+      - "Credit score deterioration"
+      - "Utilization increase"
+      - "Payment pattern changes"
+      - "Economic indicators (unemployment)"
+    
+    lagging_indicators:
+      - "Charge-off rates (3-6 month lag)"
+      - "Recovery rates"
+    
+    synonyms:
+      - "30 day delinquency"
+      - "DPD 30"
+      - "30+ DPD"
+      - "past due rate"
+      - "delinquency"
+      - "arrears rate"
+
+  # ---------------------------------------------------------------------------
+
+  delinquency_rate_90:
+    display_name: "90+ Day Delinquency Rate"
+    category: delinquency.delinquency_rates
+    bp_code: BPCRA083
+    
+    definition:
+      short: "Percentage of portfolio 90+ days past due (serious delinquency)"
+      extended: |
+        The 90+ Day Delinquency Rate measures serious delinquency, typically 
+        indicating borrowers who are unlikely to self-cure and will likely 
+        result in charge-off. Key characteristics:
+        
+        1. Often used as the definition of "default" in PD models
+        2. Triggers NPL (Non-Performing Loan) classification
+        3. IFRS 9 Stage 3 (credit-impaired) classification
+        4. More stable than 30-day rate (less noise from transitory delinquency)
+        5. Closer to actual loss realization
+        
+        Regulatory and accounting implications:
+        - NPL recognition
+        - Full lifetime ECL provisioning
+        - Non-accrual of interest income
+    
+    formula:
+      primary: "SUM(Balance where DPD >= 90) / SUM(Total Outstanding) * 100"
+      sql: |
+        ROUND(
+          SUM(a.DPD_90_BALANCE) / NULLIF(SUM(a.TOTAL_OUTSTANDING), 0) * 100,
+          2
+        )
+    
+    components:
+      - metric: dpd_90_balance
+        relationship: "numerator"
+        description: "Balance of accounts 90+ days past due"
+      - metric: adjusted_eop_balance
+        relationship: "denominator"
+        description: "Total outstanding balance"
+    
+    related_metrics:
+      - metric: delinquency_rate_30
+        relationship: "superset"
+        description: "90+ DPD is a subset of 30+ DPD"
+      - metric: npl_rate
+        relationship: "highly_correlated"
+        description: "90+ DPD often equals NPL definition"
+      - metric: net_charge_off_rate
+        relationship: "strong_predictor"
+        description: "90+ DPD accounts typically charge off within 90-180 days"
+      - metric: roll_rate_60_to_90
+        relationship: "flow_into"
+        description: "Roll rate from 60-89 bucket determines new 90+ DPD"
+    
+    business_interpretation:
+      threshold_alert: "> 1.0% for prime"
+      threshold_critical: "> 2.0% for prime"
+    
+    synonyms:
+      - "90 day delinquency"
+      - "90+ DPD"
+      - "serious delinquency"
+      - "severe delinquency"
+
+  # ===========================================================================
+  # LOSS METRICS - DETAILED
+  # ===========================================================================
+
+  net_charge_off_rate:
+    display_name: "Net Charge-Off Rate"
+    category: loss.charge_offs
+    bp_code: BPCRA143
+    
+    definition:
+      short: "Annualized rate of loans written off as losses"
+      extended: |
+        The Net Charge-Off (NCO) Rate is the most critical loss metric, measuring 
+        actual credit losses realized during the period. It represents the 
+        percentage of the portfolio written off as uncollectible, net of any 
+        recoveries on previously charged-off accounts.
+        
+        Key characteristics:
+        1. Direct P&L impact (reduces earnings)
+        2. Reduces capital ratios
+        3. Lagging indicator (reflects past credit decisions)
+        4. Most comparable metric across institutions
+        
+        Calculation considerations:
+        - Typically annualized for comparability (quarterly * 4)
+        - Denominator can be average balance or ending balance
+        - "Gross" excludes recoveries; "Net" includes recoveries
+        
+        Charge-off timing varies by product:
+        - Credit Cards: 180 days past due
+        - Mortgages: Foreclosure completion
+        - Auto Loan: Repossession and sale
+    
+    formula:
+      primary: "(Gross Charge-offs - Recoveries) / Average Outstanding * 100 * Annualization Factor"
+      sql_quarterly: |
+        ROUND(
+          SUM(a.NET_CHARGE_OFF_QTD) * 4 / NULLIF(SUM(a.TOTAL_OUTSTANDING), 0) * 100,
+          3
+        )
+      sql_ytd: |
+        ROUND(
+          SUM(a.NET_CHARGE_OFF_YTD) / NULLIF(SUM(a.TOTAL_OUTSTANDING), 0) * 100 * (12 / MONTHS_ELAPSED),
+          3
+        )
+    
+    components:
+      - metric: gross_charge_off
+        relationship: "component"
+        description: "Total loans written off during period"
+        bp_code: BPCR0032
+      - metric: recovery_amount
+        relationship: "offset"
+        description: "Amounts recovered on prior charge-offs"
+        bp_code: BPCR0031
+      - metric: adjusted_eop_balance
+        relationship: "denominator"
+        description: "Outstanding balance (average or ending)"
+    
+    related_metrics:
+      - metric: delinquency_rate_90
+        relationship: "led_by"
+        description: "90+ delinquency predicts NCO with 3-6 month lag"
+      - metric: ecl_balance
+        relationship: "compared_to"
+        description: "Actual losses vs. expected losses validates ECL model"
+      - metric: allowance_balance
+        relationship: "utilizes"
+        description: "Charge-offs reduce allowance balance"
+      - metric: provision_expense
+        relationship: "triggers"
+        description: "Higher NCO may require additional provision"
+      - metric: loss_given_default
+        relationship: "component"
+        description: "LGD * Default Rate ≈ NCO Rate"
+    
+    aggregation_rules:
+      - level: account
+        method: "Binary (charged off or not)"
+      - level: portfolio
+        method: "Sum numerator and denominator, then divide"
+      - level: period
+        method: "MTD, QTD, YTD with appropriate annualization"
+    
+    drill_down_path:
+      - "Total NCO Rate"
+      - "By Product"
+      - "By Region"
+      - "By Segment"
+      - "By Vintage"
+      - "By Origination Channel"
+      - "By Credit Score Band at Origination"
+    
+    business_interpretation:
+      increasing: |
+        - Economic deterioration
+        - Prior vintage seasoning to loss peak
+        - Underwriting problems surfacing
+        - Collection effectiveness declining
+      decreasing: |
+        - Economic improvement
+        - Tighter underwriting in prior periods
+        - Better recovery performance
+        - Portfolio mix shift to lower-risk
+      benchmark_prime: "< 0.5% for mortgage, < 2% for auto, < 3% for cards"
+      benchmark_subprime: "< 2% for mortgage, < 8% for auto, < 12% for cards"
+    
+    vintage_pattern: |
+      NCO follows a characteristic curve by vintage:
+      - Year 1: Low (accounts not yet seasoned)
+      - Year 2-3: Peak (highest losses)
+      - Year 4+: Decline (problem accounts already charged off)
+    
+    synonyms:
+      - "charge-off rate"
+      - "NCO rate"
+      - "loss rate"
+      - "write-off rate"
+      - "annualized losses"
+
+  # ---------------------------------------------------------------------------
+
+  expected_credit_loss:
+    display_name: "Expected Credit Loss"
+    category: loss.expected_loss
+    bp_code: BPCRA041
+    
+    definition:
+      short: "Forward-looking estimate of credit losses (IFRS 9 / CECL)"
+      extended: |
+        Expected Credit Loss (ECL) is the probability-weighted estimate of 
+        credit losses over the expected life of the financial instrument. 
+        It is the cornerstone of IFRS 9 and CECL accounting standards.
+        
+        ECL represents management's best estimate of losses considering:
+        1. Probability of default (PD) - likelihood of borrower default
+        2. Loss given default (LGD) - severity if default occurs
+        3. Exposure at default (EAD) - balance at time of default
+        4. Multiple economic scenarios (base, upside, downside)
+        5. Time value of money (discounting)
+        
+        IFRS 9 staging:
+        - Stage 1: 12-month ECL (performing loans)
+        - Stage 2: Lifetime ECL (significant credit deterioration)
+        - Stage 3: Lifetime ECL (credit-impaired/NPL)
+        
+        ECL directly impacts:
+        - Balance sheet (allowance for credit losses)
+        - Income statement (provision expense)
+        - Regulatory capital (through retained earnings)
+    
+    formula:
+      primary: "Σ (PD × LGD × EAD) across all accounts"
+      simple: "PD * LGD * EAD"
+      staged: |
+        Stage 1: 12-month PD * LGD * EAD
+        Stage 2/3: Lifetime PD * LGD * EAD
+      sql: "SUM(a.ECL_BALANCE)"
+    
+    components:
+      - metric: twelve_month_pd
+        relationship: "input"
+        description: "12-month probability of default"
+        bp_code: BPCRA326
+      - metric: loss_given_default
+        relationship: "input"
+        description: "Expected loss severity (1 - Recovery Rate)"
+      - metric: exposure_at_default
+        relationship: "input"
+        description: "Expected exposure when default occurs"
+        bp_code: BPCRA156
+      - metric: discount_rate
+        relationship: "input"
+        description: "Effective interest rate for discounting"
+    
+    related_metrics:
+      - metric: allowance_balance
+        relationship: "equals"
+        description: "Allowance should equal total ECL"
+      - metric: provision_expense
+        relationship: "change_in"
+        description: "Provision = Change in ECL"
+      - metric: net_charge_off
+        relationship: "validated_by"
+        description: "Actual losses validate ECL accuracy"
+      - metric: coverage_ratio
+        relationship: "derived"
+        description: "ECL / NPL Balance = Coverage"
+    
+    business_interpretation:
+      increasing: |
+        - Credit deterioration (higher PD)
+        - Economic forecast worsening
+        - Portfolio growth
+        - Mix shift to higher risk
+        - Stage migration (1→2→3)
+      decreasing: |
+        - Credit improvement
+        - Economic outlook improving
+        - Charge-offs (realize losses)
+        - Portfolio runoff
+    
+    model_considerations: |
+      ECL models require:
+      - Historical loss data (minimum 1 full cycle)
+      - Forward-looking economic scenarios
+      - Regular backtesting against actual losses
+      - Management overlays for model limitations
+    
+    synonyms:
+      - "ECL"
+      - "CECL allowance"
+      - "credit loss provision"
+      - "loan loss reserve"
+      - "allowance"
+
+  # ===========================================================================
+  # RISK SCORE METRICS - DETAILED
+  # ===========================================================================
+
+  average_credit_score:
+    display_name: "Average Credit Score"
+    category: risk_scores.bureau_scores
+    bp_code: BPCRA279
+    
+    definition:
+      short: "Portfolio-weighted average current credit score"
+      extended: |
+        The Average Credit Score represents the portfolio's overall credit 
+        quality as measured by external credit bureau scores (typically FICO). 
+        
+        Weighting methodology is critical:
+        - Balance-weighted: SUM(Score * Balance) / SUM(Balance)
+        - Equal-weighted: SUM(Score) / COUNT(Accounts)
+        - EAD-weighted: SUM(Score * EAD) / SUM(EAD)
+        
+        Balance-weighted is most common as it reflects economic exposure.
+        Large loans have more impact on portfolio risk.
+        
+        Score interpretation (FICO scale):
+        - 800+: Exceptional
+        - 740-799: Very Good
+        - 670-739: Good
+        - 580-669: Fair
+        - <580: Poor
+        
+        Score is a point-in-time measure of creditworthiness based on:
+        - Payment history (35%)
+        - Credit utilization (30%)
+        - Length of credit history (15%)
+        - Credit mix (10%)
+        - New credit inquiries (10%)
+    
+    formula:
+      primary: "SUM(Credit Score * Balance) / SUM(Balance)"
+      sql: |
+        ROUND(
+          SUM(a.AVG_CREDIT_SCORE * a.TOTAL_OUTSTANDING) / 
+          NULLIF(SUM(a.TOTAL_OUTSTANDING), 0),
+          0
+        )
+    
+    components:
+      - metric: current_credit_score
+        relationship: "source"
+        description: "Individual account credit score"
+      - metric: adjusted_eop_balance
+        relationship: "weight"
+        description: "Balance used for weighting"
+    
+    related_metrics:
+      - metric: origination_credit_score
+        relationship: "prior_value"
+        description: "Score at time of origination"
+      - metric: credit_score_migration
+        relationship: "derived"
+        description: "Current Score - Origination Score"
+      - metric: twelve_month_pd
+        relationship: "correlated"
+        description: "Lower score = higher PD (inverse relationship)"
+      - metric: delinquency_rate_30
+        relationship: "correlated"
+        description: "Lower score correlates with higher delinquency"
+    
+    stratification:
+      recommended_bands:
+        - "800+: Super Prime"
+        - "740-799: Prime"
+        - "680-739: Prime-"
+        - "620-679: Near-Prime"
+        - "580-619: Subprime"
+        - "<580: Deep Subprime"
+    
+    business_interpretation:
+      increasing: |
+        - Economic improvement
+        - Borrowers paying down debt
+        - High-risk accounts charged off
+        - New originations have higher scores
+      decreasing: |
+        - Economic stress
+        - Borrower financial deterioration
+        - Relaxed underwriting standards
+        - Mix shift to lower quality
+      threshold_floor: "700 (typical prime threshold)"
+      threshold_concern: "<680 portfolio average"
+    
+    synonyms:
+      - "credit score"
+      - "FICO score"
+      - "bureau score"
+      - "avg score"
+      - "portfolio score"
+
+  # ---------------------------------------------------------------------------
+
+  average_credit_score_weighted_by_outstanding:
+    display_name: "Credit Score Weighted by Outstanding Balance"
+    category: risk_scores.bureau_scores
+    bp_code: BPCRA331
+    
+    definition:
+      short: "Credit score averaged with outstanding balance as weight"
+      extended: |
+        This metric calculates the average credit score where each account's 
+        contribution is proportional to its outstanding balance. This is the 
+        preferred method for portfolio-level credit quality assessment because:
+        
+        1. Larger exposures have more impact on portfolio risk
+        2. Reflects economic reality (a $500K mortgage matters more than $5K card)
+        3. Aligns with how losses would be distributed
+        
+        Comparison to equal-weighted average:
+        - If balance-weighted > equal-weighted: Larger loans are better quality
+        - If balance-weighted < equal-weighted: Larger loans are worse quality
+        
+        This difference can reveal concentration risk in large accounts.
+    
+    formula:
+      primary: "Σ(Credit Score × Outstanding Balance) / Σ(Outstanding Balance)"
+      sql: |
+        SUM(CURRENT_CREDIT_SCORE * ADJUSTED_EOP_BALANCE_RCY) / 
+        NULLIF(SUM(ADJUSTED_EOP_BALANCE_RCY), 0)
+    
+    components:
+      - metric: current_credit_score
+        relationship: "numerator_component"
+        description: "Individual account credit score (300-850 scale)"
+        bp_code: BPCRA279
+      - metric: adjusted_eop_balance
+        relationship: "weight"
+        description: "Outstanding balance providing the weight"
+        bp_code: BPCRA097
+    
+    related_metrics:
+      - metric: average_credit_score
+        relationship: "same_concept"
+        description: "Generic term for weighted score"
+      - metric: credit_score_weighted_by_ead
+        relationship: "similar"
+        description: "Alternative weighting using EAD"
+      - metric: origination_credit_score
+        relationship: "comparison"
+        description: "Compare current vs origination for migration analysis"
+    
+    calculation_variants:
+      by_outstanding:
+        name: "Weighted by Outstanding Balance"
+        use_case: "Standard portfolio quality measure"
+        formula: "Σ(Score × AOB) / Σ(AOB)"
+      by_ead:
+        name: "Weighted by EAD"
+        use_case: "Risk-weighted for regulatory purposes"
+        formula: "Σ(Score × EAD) / Σ(EAD)"
+      by_exposure:
+        name: "Weighted by Gross Exposure"
+        use_case: "Includes undrawn commitments"
+        formula: "Σ(Score × GCE) / Σ(GCE)"
+      equal_weighted:
+        name: "Equal Weighted"
+        use_case: "Account-level view regardless of size"
+        formula: "Σ(Score) / COUNT(Accounts)"
+    
+    business_interpretation:
+      divergence_analysis: |
+        Compare balance-weighted vs equal-weighted:
+        - BW > EW: Large loans have better scores (good concentration)
+        - BW < EW: Large loans have worse scores (risky concentration)
+        - Monitor divergence over time for concentration trends
+    
+    synonyms:
+      - "weighted average credit score"
+      - "balance-weighted FICO"
+      - "portfolio credit score"
+
+  # ---------------------------------------------------------------------------
+
+  twelve_month_pd:
+    display_name: "12-Month Probability of Default"
+    category: risk_scores.probability_of_default
+    bp_code: BPCRA326
+    
+    definition:
+      short: "Probability borrower will default within next 12 months"
+      extended: |
+        The 12-Month Probability of Default (PD) is a forward-looking risk metric 
+        representing the likelihood that a borrower will default within the next 
+        year. It is a cornerstone of modern credit risk management:
+        
+        Key uses:
+        1. IFRS 9 Stage 1 ECL calculation
+        2. Basel regulatory capital (PD component of IRB)
+        3. Pricing decisions
+        4. Credit limit management
+        5. Portfolio monitoring
+        
+        PD is typically derived from:
+        - Credit bureau scores (using score-to-PD mapping)
+        - Internal behavioral models
+        - Application scorecards
+        - Industry/economic factors
+        
+        PD increases with:
+        - Lower credit scores
+        - Higher delinquency
+        - Economic deterioration
+        - Industry stress
+        
+        Point-in-Time (PIT) vs Through-the-Cycle (TTC):
+        - PIT: Reflects current economic conditions
+        - TTC: Averaged across economic cycle
+        - IFRS 9 requires PIT-adjusted PD
+    
+    formula:
+      primary: "Model-derived probability based on risk characteristics"
+      portfolio_average: "Σ(PD × EAD) / Σ(EAD)"
+      sql: |
+        SUM(a.AVG_PD * a.TOTAL_OUTSTANDING) / 
+        NULLIF(SUM(a.TOTAL_OUTSTANDING), 0)
+    
+    components:
+      - metric: current_credit_score
+        relationship: "primary_driver"
+        description: "Score is the main PD determinant"
+      - metric: delinquency_status
+        relationship: "driver"
+        description: "Delinquent accounts have higher PD"
+      - metric: economic_scenarios
+        relationship: "adjustment"
+        description: "Economic outlook adjusts PIT PD"
+    
+    related_metrics:
+      - metric: expected_credit_loss
+        relationship: "input_to"
+        description: "ECL = PD × LGD × EAD"
+      - metric: delinquency_rate_30
+        relationship: "correlated"
+        description: "Higher delinquency = higher PD"
+      - metric: current_credit_score
+        relationship: "derived_from"
+        description: "PD is inverse function of score"
+      - metric: loss_given_default
+        relationship: "paired_with"
+        description: "Together determine expected loss"
+    
+    score_to_pd_mapping:
+      example: |
+        Score Band    |  Typical 12m PD
+        ---------------|----------------
+        800+           |  0.1% - 0.3%
+        750-799        |  0.3% - 0.8%
+        700-749        |  0.8% - 2.0%
+        650-699        |  2.0% - 5.0%
+        600-649        |  5.0% - 12.0%
+        550-599        |  12.0% - 25.0%
+        <550           |  25.0%+
+    
+    business_interpretation:
+      increasing: |
+        - Credit deterioration
+        - Economic downturn forecast
+        - Score migration downward
+      decreasing: |
+        - Credit improvement
+        - Economic outlook improving
+        - Score migration upward
+    
+    synonyms:
+      - "PD"
+      - "probability of default"
+      - "default probability"
+      - "default rate"
+      - "expected default frequency"
+
+  # ===========================================================================
+  # LTV METRICS - DETAILED
+  # ===========================================================================
+
+  current_ltv:
+    display_name: "Current Loan-to-Value Ratio"
+    category: collateral.ltv_metrics
+    bp_code: BPCRA146
+    
+    definition:
+      short: "Current loan balance divided by current property value"
+      extended: |
+        The Loan-to-Value (LTV) ratio measures the loan amount relative to the 
+        collateral value, indicating how well-secured the loan is. A lower LTV 
+        means more equity cushion protecting against loss.
+        
+        LTV dynamics:
+        - Decreases as: Loan amortizes OR property value increases
+        - Increases as: Additional draws (HELOC) OR property value decreases
+        
+        Risk implications:
+        - High LTV (>80%): Less equity cushion, higher LGD
+        - Underwater (>100%): Loan exceeds property value, very high loss risk
+        - Low LTV (<60%): Well-secured, low loss severity
+        
+        Regulatory/market considerations:
+        - LTV > 80% typically requires mortgage insurance
+        - Determines eligibility for refinancing
+        - Affects pricing and terms
+        
+        For HELOC/Combined LTV (CLTV):
+        - Includes all liens on property
+        - CLTV = (1st Mortgage + 2nd Mortgage + HELOC) / Property Value
+    
+    formula:
+      primary: "Current Loan Balance / Current Property Value × 100"
+      combined: "(All Liens) / Property Value × 100"
+      portfolio_weighted: "Σ(LTV × Balance) / Σ(Balance)"
+      sql: "SUM(a.AVG_LTV * a.TOTAL_OUTSTANDING) / NULLIF(SUM(a.TOTAL_OUTSTANDING), 0)"
+    
+    components:
+      - metric: adjusted_eop_balance
+        relationship: "numerator"
+        description: "Current loan balance"
+      - metric: property_value
+        relationship: "denominator"
+        description: "Current estimated property value (AVM or appraisal)"
+      - metric: combined_lien_balance
+        relationship: "numerator_variant"
+        description: "All liens for CLTV calculation"
+    
+    related_metrics:
+      - metric: origination_ltv
+        relationship: "prior_value"
+        description: "LTV at time of origination"
+        bp_code: BPCRA120
+      - metric: loss_given_default
+        relationship: "drives"
+        description: "Higher LTV = higher LGD"
+      - metric: underwater_exposure
+        relationship: "derived"
+        description: "Balance where LTV > 100%"
+      - metric: negative_equity
+        relationship: "derived"
+        description: "Balance - Property Value (when negative)"
+    
+    stratification:
+      recommended_bands:
+        - "0-60%: Low LTV (well-secured)"
+        - "60-80%: Moderate LTV"
+        - "80-90%: High LTV"
+        - "90-100%: Very High LTV"
+        - ">100%: Underwater"
+    
+    business_interpretation:
+      increasing_ltv: |
+        - Property value decline (market correction)
+        - Line draws on revolving products
+        - Negative amortization
+        WARNING: Increasing LTV is a risk signal
+      decreasing_ltv: |
+        - Property appreciation
+        - Principal paydown
+        - Positive sign for portfolio
+      threshold_concern: ">80% average LTV"
+      threshold_critical: ">90% or significant underwater population"
+    
+    product_relevance:
+      mortgage: "Primary risk metric for home loans"
+      auto: "Car value typically depreciates, making LTV less relevant"
+      heloc: "CLTV critical as it's a second lien"
+    
+    synonyms:
+      - "LTV"
+      - "loan to value"
+      - "CLTV"
+      - "combined LTV"
+      - "collateral coverage"
+
+  # ===========================================================================
+  # UTILIZATION METRICS - DETAILED
+  # ===========================================================================
+
+  utilization_rate:
+    display_name: "Credit Utilization Rate"
+    category: behavioral.utilization
+    bp_code: BPCRA137
+    
+    definition:
+      short: "Percentage of credit limit currently in use"
+      extended: |
+        Credit Utilization measures how much of available credit the borrower 
+        is using. It is one of the most important behavioral early warning 
+        indicators because:
+        
+        1. High utilization signals financial stress
+        2. It's a leading indicator of future delinquency
+        3. It affects credit scores (30% of FICO score)
+        4. Rising utilization often precedes defaults
+        
+        Interpretation:
+        - <30%: Healthy usage
+        - 30-50%: Moderate usage
+        - 50-80%: Elevated usage (watch list)
+        - >80%: High stress indicator
+        - >100%: Overlimit (rare, very high risk)
+        
+        Important for revolving products (credit cards, HELOCs) where 
+        borrowers can vary their usage. Less meaningful for term loans 
+        where utilization is effectively 100%.
+    
+    formula:
+      primary: "Outstanding Balance / Credit Limit × 100"
+      portfolio: "Σ(Outstanding) / Σ(Credit Limit) × 100"
+      weighted: "Σ(Utilization × Limit) / Σ(Limit)"
+      sql: |
+        ROUND(
+          SUM(a.TOTAL_OUTSTANDING) / NULLIF(SUM(a.TOTAL_CREDIT_LIMIT), 0) * 100,
+          2
+        )
+    
+    components:
+      - metric: adjusted_eop_balance
+        relationship: "numerator"
+        description: "Current outstanding balance"
+      - metric: current_credit_limit
+        relationship: "denominator"
+        description: "Current credit limit"
+    
+    related_metrics:
+      - metric: available_credit
+        relationship: "inverse"
+        description: "Available = (100% - Utilization%) × Limit"
+      - metric: delinquency_rate_30
+        relationship: "leads"
+        description: "High utilization predicts future delinquency"
+      - metric: current_credit_score
+        relationship: "affects"
+        description: "High utilization lowers credit scores"
+      - metric: overlimit_count
+        relationship: "extreme_case"
+        description: "Accounts where utilization > 100%"
+    
+    stratification:
+      recommended_bands:
+        - "0-30%: Low utilization"
+        - "30-50%: Moderate utilization"
+        - "50-70%: Elevated utilization"
+        - "70-90%: High utilization"
+        - "90-100%: Very high utilization"
+        - ">100%: Overlimit"
+    
+    business_interpretation:
+      increasing: |
+        - Borrowers drawing more credit
+        - Consumer financial stress
+        - Early warning signal for delinquency
+        - May precede economic downturn
+      decreasing: |
+        - Borrowers paying down debt
+        - Healthy financial behavior
+        - Economic confidence
+      threshold_alert: ">50% portfolio average"
+      threshold_critical: ">70% portfolio average"
+    
+    segment_expectations:
+      prime: "Typically 25-35%"
+      near_prime: "Typically 40-55%"
+      subprime: "Typically 60-80%"
+    
+    synonyms:
+      - "utilization"
+      - "credit usage"
+      - "line usage"
+      - "usage rate"
+
+
+# =============================================================================
+# SECTION 3: METRIC RELATIONSHIP MAP
+# =============================================================================
+# Visual representation of how metrics connect
+
+metric_relationships:
+
+  # Exposure Chain
+  exposure_chain:
+    description: "How exposure metrics relate"
+    flow: |
+      Original Credit Limit
+           ↓
+      Current Credit Limit → Available Credit
+           ↓                      ↑
+      Outstanding Balance ←→ Utilization Rate
+           ↓
+      Gross Credit Exposure ← Undrawn Commitment × CCF
+           ↓
+      Net Credit Exposure ← Mitigant Value
+           ↓
+      Exposure at Default (EAD)
+
+  # Loss Prediction Chain
+  loss_prediction_chain:
+    description: "From early warning to realized loss"
+    flow: |
+      Credit Score ──→ Probability of Default (PD)
+           ↓                    ↓
+      Utilization ──→ Delinquency 30+ ──→ Delinquency 90+
+                           ↓                    ↓
+                      Stage 2 ECL ──→ Stage 3 ECL / NPL
+                                           ↓
+                                    Charge-Off (NCO)
+                                           ↓
+                                      Recovery
+                                           ↓
+                                   Net Realized Loss
+
+  # ECL Calculation Chain
+  ecl_chain:
+    description: "Components of Expected Credit Loss"
+    flow: |
+      Credit Score ──→ PD Model ──→ 12-Month PD
+                                        ↓
+      LTV ──→ LGD Model ──→ Loss Given Default
+                                   ↓
+      Balance + Undrawn ──→ EAD Model ──→ Exposure at Default
+                                              ↓
+                              ECL = PD × LGD × EAD
+                                      ↓
+                         Provision Expense (P&L Impact)
+                                      ↓
+                         Allowance Balance (B/S Reserve)
+
+  # Vintage Performance Chain
+  vintage_chain:
+    description: "How vintage analysis connects metrics"
+    flow: |
+      Origination Score ──→ Origination LTV ──→ Origination DTI
+             ↓                    ↓                    ↓
+      Initial Risk Grade    Secured Status      Affordability
+             ↓                    ↓                    ↓
+      Current Score         Current LTV         Payment Behavior
+             ↓                    ↓                    ↓
+      Score Migration ──→ Delinquency ──→ Loss Rate by Vintage
+
+
+# =============================================================================
+# SECTION 4: CALCULATION RULES & CONVENTIONS
+# =============================================================================
+
+calculation_rules:
+
+  # Balance vs Count Rates
+  rate_calculations:
+    balance_weighted:
+      description: "Rate based on dollar amounts"
+      formula: "SUM(Metric Amount) / SUM(Total Balance)"
+      use_cases:
+        - "Delinquency rate (standard)"
+        - "NCO rate"
+        - "NPL ratio"
+      example: "30+ DPD Rate = DPD_30_BALANCE / TOTAL_OUTSTANDING"
+      
+    count_weighted:
+      description: "Rate based on number of accounts"
+      formula: "COUNT(Metric Flag = Y) / COUNT(All Accounts)"
+      use_cases:
+        - "Account-level delinquency"
+        - "Default rate by count"
+      example: "30+ DPD Count Rate = COUNT(DPD_30_FLAG='Y') / COUNT(*)"
+      
+    exposure_weighted:
+      description: "Rate based on exposure (includes undrawn)"
+      formula: "SUM(Metric Amount) / SUM(Gross Exposure)"
+      use_cases:
+        - "Exposure-based concentration"
+        - "Commitment utilization"
+
+  # Weighted Average Rules
+  weighted_averages:
+    by_balance:
+      description: "Weight by outstanding balance"
+      formula: "SUM(Metric × Balance) / SUM(Balance)"
+      metrics:
+        - "Average Credit Score"
+        - "Average LTV"
+        - "Average PD"
+      rationale: "Larger exposures have more portfolio impact"
+      
+    by_ead:
+      description: "Weight by exposure at default"
+      formula: "SUM(Metric × EAD) / SUM(EAD)"
+      metrics:
+        - "PD for ECL"
+        - "LGD for ECL"
+      rationale: "Reflects loss-weighted risk"
+      
+    by_limit:
+      description: "Weight by credit limit"
+      formula: "SUM(Metric × Limit) / SUM(Limit)"
+      metrics:
+        - "Utilization"
+        - "Available credit analysis"
+      rationale: "Reflects total commitment"
+
+  # Annualization Rules
+  annualization:
+    monthly_to_annual:
+      formula: "Monthly Rate × 12"
+      example: "Monthly NCO 0.04% → Annual 0.48%"
+      
+    quarterly_to_annual:
+      formula: "Quarterly Rate × 4"
+      example: "Quarterly NCO 0.12% → Annual 0.48%"
+      
+    ytd_to_annual:
+      formula: "YTD Rate × (12 / Months Elapsed)"
+      example: "6-month NCO 0.24% → Annual 0.48%"
+      
+    considerations: |
+      - Use average balance for denominator when annualizing
+      - Be consistent with numerator/denominator periods
+      - Note: Annualization assumes constant run rate
+
+  # Period Conventions
+  period_conventions:
+    mtd: "Month-to-Date: Cumulative from month start to reporting date"
+    qtd: "Quarter-to-Date: Cumulative from quarter start to reporting date"
+    ytd: "Year-to-Date: Cumulative from year start to reporting date"
+    mom: "Month-over-Month: Current month vs prior month"
+    qoq: "Quarter-over-Quarter: Current quarter vs prior quarter"
+    yoy: "Year-over-Year: Current period vs same period prior year"
+
+
+# =============================================================================
+# DATA AVAILABILITY METADATA
+# =============================================================================
+
+database_metadata:
+  description: "CR360 demo database with focused stress testing scenario"
+
+  data_availability:
+    date_range:
+      available_quarters: ["Q1-2024", "Q4-2024", "Q4-2025"]
+      missing_quarters: ["Q2-2024", "Q3-2024", "Q1-2025", "Q2-2025", "Q3-2025"]
+      note: "Demo focuses on 3 time points showing portfolio deterioration"
+
+    products:
+      available: ["Mortgage", "Auto Loan", "Credit Card"]
+      not_available: ["Personal Loan", "Home Equity Line", "Commercial"]
+      note: "Demo focuses on primary retail products"
+
+    regions:
+      available: ["Northeast", "Southeast", "Midwest", "West", "Canada"]
+      note: "All regions have data"
+
+    segments:
+      available: ["Prime", "Near-Prime", "Subprime"]
+      note: "All segments have data"
+
+
+# =============================================================================
+# SECTION 5: DATABASE SCHEMA (SUPABASE/POSTGRESQL)
+# =============================================================================
+
+tables:
+
+  dim_date:
+    description: "Date dimension for time-based analysis"
+    primary_key: date_skey
+    columns:
+      date_skey: {type: INTEGER, description: "Date key (YYYYMMDD format)"}
+      calendar_date: {type: DATE, description: "Calendar date"}
+      year: {type: INTEGER, description: "Year (2024, 2025, etc.)"}
+      quarter: {type: INTEGER, description: "Quarter (1-4)"}
+      quarter_name: {type: VARCHAR(10), description: "Quarter name (Q1-2024, etc.)"}
+      month: {type: INTEGER, description: "Month (1-12)"}
+      month_name: {type: VARCHAR(20), description: "Month name"}
+      is_month_end: {type: BOOLEAN, description: "Is last day of month"}
+      is_quarter_end: {type: BOOLEAN, description: "Is last day of quarter"}
+
+  dim_product:
+    description: "Product dimension for product-level analysis"
+    primary_key: product_skey
+    columns:
+      product_skey: {type: INTEGER, description: "Product surrogate key"}
+      product_code: {type: VARCHAR(20), description: "Product code (MTG, AUTO, CC, etc.)"}
+      product_name: {type: VARCHAR(100), description: "Product name"}
+      product_type: {type: VARCHAR(50), description: "Product type"}
+      product_family: {type: VARCHAR(50), description: "Product family (Secured/Unsecured)"}
+      is_secured: {type: BOOLEAN, description: "Is secured product"}
+      is_revolving: {type: BOOLEAN, description: "Is revolving product"}
+
+  dim_region:
+    description: "Geographic region dimension"
+    primary_key: region_skey
+    columns:
+      region_skey: {type: INTEGER, description: "Region surrogate key"}
+      region_code: {type: VARCHAR(10), description: "Region code (NE, SE, MW, WE, CA)"}
+      region_name: {type: VARCHAR(50), description: "Region name"}
+      country: {type: VARCHAR(50), description: "Country"}
+      state_province: {type: VARCHAR(50), description: "State or province"}
+
+  dim_segment:
+    description: "Customer segment dimension"
+    primary_key: segment_skey
+    columns:
+      segment_skey: {type: INTEGER, description: "Segment surrogate key"}
+      segment_code: {type: VARCHAR(20), description: "Segment code (PRIME, NPRIME, SUBP)"}
+      segment_name: {type: VARCHAR(50), description: "Segment name"}
+      retail_classification: {type: VARCHAR(20), description: "Retail classification (Prime, Near-Prime, Subprime)"}
+      risk_tier: {type: INTEGER, description: "Risk tier (1=lowest risk)"}
+
+  agg_monthly_summary:
+    description: "Pre-aggregated monthly summary at product/region/segment grain"
+    primary_key: [as_of_date_skey, product_skey, region_skey, segment_skey]
+    grain: "One row per product × region × segment × month-end"
+    
+    column_groups:
+      keys:
+        as_of_date_skey: {type: INTEGER, fk: dim_date}
+        product_skey: {type: INTEGER, fk: dim_product}
+        region_skey: {type: INTEGER, fk: dim_region}
+        segment_skey: {type: INTEGER, fk: dim_segment}
+        
+      counts:
+        account_count: {type: INTEGER, description: "Total accounts"}
+        delinquent_account_count: {type: INTEGER, description: "Delinquent accounts"}
+        dpd_30_account_count: {type: INTEGER, description: "30+ DPD accounts"}
+        dpd_60_account_count: {type: INTEGER, description: "60+ DPD accounts"}
+        dpd_90_account_count: {type: INTEGER, description: "90+ DPD accounts"}
+        npl_account_count: {type: INTEGER, description: "NPL accounts"}
+        charge_off_account_count: {type: INTEGER, description: "Charged-off accounts"}
+        
+      balances:
+        total_exposure: {type: DECIMAL(18,2), description: "Total gross exposure", unit: USD}
+        total_outstanding: {type: DECIMAL(18,2), description: "Total outstanding balance", unit: USD}
+        total_credit_limit: {type: DECIMAL(18,2), description: "Total credit limits", unit: USD}
+        delinquent_balance: {type: DECIMAL(18,2), description: "Total delinquent balance", unit: USD}
+        dpd_30_balance: {type: DECIMAL(18,2), description: "30+ DPD balance", unit: USD}
+        dpd_60_balance: {type: DECIMAL(18,2), description: "60+ DPD balance", unit: USD}
+        dpd_90_balance: {type: DECIMAL(18,2), description: "90+ DPD balance", unit: USD}
+        npl_balance: {type: DECIMAL(18,2), description: "NPL balance", unit: USD}
+        
+      loss_metrics:
+        net_charge_off_mtd: {type: DECIMAL(18,2), description: "Net charge-off MTD", unit: USD}
+        net_charge_off_qtd: {type: DECIMAL(18,2), description: "Net charge-off QTD", unit: USD}
+        net_charge_off_ytd: {type: DECIMAL(18,2), description: "Net charge-off YTD", unit: USD}
+        ecl_balance: {type: DECIMAL(18,2), description: "Expected credit loss", unit: USD}
+        allowance_balance: {type: DECIMAL(18,2), description: "Allowance balance", unit: USD}
+        
+      origination_metrics:
+        origination_count: {type: INTEGER, description: "New originations"}
+        origination_volume: {type: DECIMAL(18,2), description: "Origination volume", unit: USD}
+        funded_count: {type: INTEGER, description: "Funded applications"}
+        funded_volume: {type: DECIMAL(18,2), description: "Funded volume", unit: USD}
+        
+      averages:
+        avg_credit_score: {type: DECIMAL(10,2), description: "Avg credit score (balance-weighted)"}
+        avg_origination_score: {type: DECIMAL(10,2), description: "Avg origination score"}
+        avg_ltv: {type: DECIMAL(10,4), description: "Avg LTV (balance-weighted)"}
+        avg_pd: {type: DECIMAL(10,6), description: "Avg 12-month PD (balance-weighted)"}
+        avg_utilization: {type: DECIMAL(10,4), description: "Avg utilization rate"}
+
+
+# =============================================================================
+# SECTION 6: SQL GENERATION PATTERNS
+# =============================================================================
+
+# Dimension Mapping Rules - Specifies which SQL columns to use for each dimension
+dimension_mapping_rules:
+  product:
+    default_column: product_name  # Always use product_name for "by product" queries
+    description: "Use product_name for product-level analysis (e.g., 'Mortgage', 'Auto Loan', 'Credit Card')"
+    alternatives:
+      - column: product_type
+        keywords: ["product category", "product group", "product classification"]
+        description: "Use for higher-level categorization"
+      - column: product_family
+        keywords: ["secured vs unsecured", "product family", "collateral type"]
+        description: "Use for secured/unsecured split"
+
+  region:
+    default_column: region_name
+    description: "Use region_name for geographic analysis (e.g., 'Northeast', 'Southeast', 'Midwest', 'West', 'Canada')"
+
+  segment:
+    default_column: segment_name
+    description: "Use segment_name for risk segmentation (e.g., 'Prime', 'Near-Prime', 'Subprime')"
+
+sql_patterns:
+
+  # Basic aggregation
+  portfolio_total:
+    question: "What is our total exposure/balance/portfolio size?"
+    pattern: |
+      SELECT 
+        ROUND(SUM(total_outstanding)::NUMERIC / 1e9, 2) AS portfolio_billions
+      FROM agg_monthly_summary a
+      JOIN dim_date d ON a.as_of_date_skey = d.date_skey
+      WHERE d.quarter_name = 'Q4-2025'
+
+  # Rate calculation
+  rate_by_dimension:
+    question: "What is the [metric] rate by [dimension]?"
+    pattern: |
+      SELECT 
+        [dimension_column],
+        ROUND(SUM([numerator]) / NULLIF(SUM([denominator]), 0) * 100, 2) AS rate_pct
+      FROM agg_monthly_summary a
+      JOIN dim_date d ON a.as_of_date_skey = d.date_skey
+      JOIN [dimension_table] ON [join_condition]
+      WHERE d.quarter_name = 'Q4-2025'
+      GROUP BY [dimension_column]
+      ORDER BY rate_pct DESC
+
+  # Trend analysis
+  trend_over_time:
+    question: "Show me the trend of [metric] over time"
+    pattern: |
+      SELECT 
+        d.quarter_name,
+        ROUND(SUM([metric_formula]), 2) AS metric_value
+      FROM agg_monthly_summary a
+      JOIN dim_date d ON a.as_of_date_skey = d.date_skey
+      GROUP BY d.quarter_name, d.date_skey
+      ORDER BY d.date_skey
+
+  # Comparison
+  period_comparison:
+    question: "Compare [metric] between [period1] and [period2]"
+    pattern: |
+      SELECT 
+        d.quarter_name,
+        ROUND(SUM([metric_formula]), 2) AS metric_value
+      FROM agg_monthly_summary a
+      JOIN dim_date d ON a.as_of_date_skey = d.date_skey
+      WHERE d.quarter_name IN ('[period1]', '[period2]')
+      GROUP BY d.quarter_name
+      ORDER BY d.date_skey
+
+  # Multi-dimensional
+  pivot_analysis:
+    question: "Show [metric] by [dimension1] and [dimension2]"
+    pattern: |
+      SELECT 
+        [dim1_column],
+        [dim2_column],
+        ROUND(SUM([metric_formula]), 2) AS metric_value
+      FROM agg_monthly_summary a
+      JOIN dim_date d ON a.as_of_date_skey = d.date_skey
+      JOIN [dim1_table] ON [join1]
+      JOIN [dim2_table] ON [join2]
+      WHERE d.quarter_name = 'Q4-2025'
+      GROUP BY [dim1_column], [dim2_column]
+      ORDER BY [dim1_column], metric_value DESC
+
+
+# =============================================================================
+# SECTION 7: BUSINESS CONTEXT & THRESHOLDS
+# =============================================================================
+
+business_context:
+
+  portfolio_overview:
+    total_assets: "$400 billion"
+    account_count: "~5 million"
+    products: ["Mortgage", "Auto Loan", "Credit Card", "Personal Loan", "Home Equity Line", "Commercial"]
+    regions: ["Northeast", "Southeast", "Midwest", "West", "Canada"]
+    segments: ["Prime", "Near-Prime", "Subprime"]
+
+  risk_thresholds:
+    delinquency_30:
+      target: "< 2.5%"
+      alert: "2.5% - 4.0%"
+      critical: "> 4.0%"
+      
+    delinquency_90:
+      target: "< 1.0%"
+      alert: "1.0% - 2.0%"
+      critical: "> 2.0%"
+      
+    nco_rate_annual:
+      target: "< 0.8%"
+      alert: "0.8% - 1.5%"
+      critical: "> 1.5%"
+      
+    avg_credit_score:
+      target: "> 720"
+      alert: "680 - 720"
+      critical: "< 680"
+      
+    avg_ltv:
+      target: "< 70%"
+      alert: "70% - 80%"
+      critical: "> 80%"
+      
+    utilization:
+      target: "< 40%"
+      alert: "40% - 60%"
+      critical: "> 60%"
+
+  known_trends_for_demo:
+    - pattern: "Southeast Stress"
+      description: "Southeast region shows highest delinquency (3%+) due to subprime concentration"
+      investigation: "Drill from region → segment → product"
+      
+    - pattern: "Subprime Deterioration"
+      description: "Subprime segment DPD trending up from 5% to 8%+ over 6 quarters"
+      investigation: "Show trend by quarter, compare to Prime"
+      
+    - pattern: "Auto Loan NCO Spike"
+      description: "Auto Loan showing elevated NCO due to used car depreciation"
+      investigation: "Compare NCO by product, drill into Auto Loan by region/segment"
+      
+    - pattern: "Credit Card Utilization Warning"
+      description: "CC utilization 58% in Southeast Subprime - stress signal"
+      investigation: "Show utilization by region and segment"
+      
+    - pattern: "Canada Outperformance"
+      description: "Canada region has best credit quality (1.5% DPD)"
+      investigation: "Compare regional delinquency, show Canada as benchmark"
+
+
+# =============================================================================
+# SECTION 8: GLOSSARY
+# =============================================================================
+
+glossary:
+  AOB: "Adjusted Outstanding Balance - Outstanding balance after adjustments"
+  CCF: "Credit Conversion Factor - Probability undrawn will be drawn at default"
+  CCL: "Current Credit Limit - Maximum authorized credit amount"
+  CECL: "Current Expected Credit Loss - US GAAP accounting standard"
+  CLTV: "Combined Loan-to-Value - LTV including all liens"
+  DPD: "Days Past Due - Number of days payment is overdue"
+  EAD: "Exposure at Default - Expected balance when default occurs"
+  ECL: "Expected Credit Loss - Forward-looking loss provision"
+  EOP: "End of Period - Balance at reporting date"
+  GCE: "Gross Credit Exposure - Total exposure before mitigants"
+  GDS: "Gross Debt Service - Housing costs / income ratio"
+  IFRS9: "International Financial Reporting Standard 9"
+  LGD: "Loss Given Default - Expected loss severity (1 - Recovery Rate)"
+  LTV: "Loan-to-Value - Loan balance / collateral value"
+  MTD: "Month-to-Date"
+  NCO: "Net Charge-Off - Gross charge-offs minus recoveries"
+  NPL: "Non-Performing Loan - Typically 90+ DPD or impaired"
+  OCL: "Original Credit Limit - Limit at origination"
+  PD: "Probability of Default - Likelihood of borrower defaulting"
+  PIT: "Point-in-Time - Reflects current economic conditions"
+  QTD: "Quarter-to-Date"
+  RCY: "Reporting Currency - Amounts in USD"
+  TDS: "Total Debt Service - All debt payments / income ratio"
+  TTC: "Through-the-Cycle - Averaged across economic cycle"
+  YTD: "Year-to-Date"
